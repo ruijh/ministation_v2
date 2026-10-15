@@ -1,0 +1,16 @@
+[Unit]
+Description=MiniStation local CPU decision service port forwarding
+After=docker.service
+Wants=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Environment=KUBECONFIG=/root/.kube/config
+ExecStart=/bin/bash /opt/ministation/jev-forward/port-forward.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

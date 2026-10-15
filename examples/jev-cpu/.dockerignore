@@ -1,0 +1,5 @@
+model/download-parts
+model/*.part
+model/.cache
+__pycache__
+*.tar

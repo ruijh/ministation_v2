@@ -1,0 +1,11 @@
+# Reuse the already validated Python 3.12 image in this local cluster.
+FROM ministation-cpu-model:1
+WORKDIR /app
+COPY runtime /usr/local/lib/python3.12/site-packages
+COPY vendor ./vendor
+COPY service.py provenance.json ./
+COPY model /models/qwen3-0.6b
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 BIND_HOST=0.0.0.0 PORT=8000 CPU_THREADS=2 MAX_INPUT_TOKENS=1024
+USER 1000:1000
+EXPOSE 8000
+CMD ["python", "service.py"]

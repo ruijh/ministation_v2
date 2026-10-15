@@ -1,0 +1,18 @@
+{
+  "engine": "Meanblock/JEV-CPU",
+  "engine_revision": "759fa60603a0e312cda38824e63e58f18445c14a",
+  "engine_license": "MIT",
+  "model": "Qwen/Qwen3-0.6B",
+  "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "model_license": "Apache-2.0",
+  "readout": "SemIf direct option logits, CPU FP32; uncalibrated probabilities",
+  "weights_sha256": "f47f71177f32bcd101b7573ec9171e6a57f4f4d31148d38e382306f42996874b",
+  "vendor_files_sha256": {
+    "LICENSE": "f765f2140f8507a8f0d81ec0fd2c4bd72fe6a066841ef27883ff876a76bf61be",
+    "THIRD_PARTY.md": "d0f4043c20f6a743fdfc9e44807ef59237b58a00fa68e052e310b533a40b812a",
+    "semif_cpu.py": "5f5cc122344bd757acf6ab0c0cd23ba3a7e0ea992f9189415533fee28d9b86fc",
+    "src/semif_phase1/__init__.py": "5f6ed0e26bfb415745ca3a53a79130e65d1e9a98247b2d594137f7d80479c5f8",
+    "src/semif_phase1/core.py": "c33dc41a789c39c095c85c1d23d09690dee3726d737bc3dbd051a4f97115e486",
+    "src/semif_phase1/direct.py": "2c89209787b1b51e5f8f8062b4f602da4c82ba7efad50a4df0863b04aef70c9f"
+  }
+}

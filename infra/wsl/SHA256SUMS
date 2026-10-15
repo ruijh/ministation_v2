@@ -1,0 +1,6 @@
+2a790896740b14d637dbdc583cce1ba081ac53b9e9cdb46dc09a2f73abbd9934  ubuntu-noble-wsl-amd64-24.04lts.rootfs.tar.gz
+d3930f601ea875e3480c3383e4f5200572b749bf3a4340b81a95f14bb82ec7ea  ubuntu-noble-wsl-amd64-wsl.manifest
+8251e27ffff381a4af5f41dcb94d867de3e0d9774a9241908ab34555d99315ea  ubuntu-noble-wsl-amd64-wsl.rootfs.tar.gz
+e113b8c49af3ab49b992b8e29550fc921e689f211abc338176f8243786173a32  ubuntu-noble-wsl-arm64-24.04lts.rootfs.tar.gz
+1ac9f67d29a58d58acdc8129fa5b5da024946b409c064a587f6ecc4294eb76cb  ubuntu-noble-wsl-arm64-wsl.manifest
+fecec1d9b7b750c12c109edb49c13c1006f4a2efabb9b8bf341f11c4c9f2ef11  ubuntu-noble-wsl-arm64-wsl.rootfs.tar.gz

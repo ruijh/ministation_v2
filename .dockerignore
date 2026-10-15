@@ -1,0 +1,12 @@
+node_modules
+.npm-cache
+data
+artifacts
+test-results
+playwright-report
+infra/wsl/credentials
+infra/wsl/distro
+**/*.tar
+**/*.tar.gz
+**/*.msi*
+.env
