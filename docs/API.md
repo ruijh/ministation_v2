@@ -107,3 +107,7 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 `MINISTATION_PROMETHEUS_URL` 为管理员启动时配置的内部 Prometheus 地址，不接收浏览器传入的任意监控 URL。后端使用固定 namespace/pod 查询；DCGM 必须提供 namespace/pod 标签。无数据返回 null。
 
 自动化及发布行为的边界见 OPERATIONS-ROUNDS.md；控制台告警不发送外部消息，缩容排空不覆盖绕过网关的直连请求。
+
+## 实验性分布式模型组
+
+新增 `/api/distributed` 列表与创建、`/api/distributed/preview` 预检、`/api/distributed/:id/refresh` 同步、`/api/distributed/:id/delete` 清理。模型组按项目隔离，创建与清理仅管理员可操作；`POST /api/backends` 可通过 `distributed_id` 关联就绪组。具体参数、部分失败语义与边界见 [分布式推理说明](DISTRIBUTED.md)。

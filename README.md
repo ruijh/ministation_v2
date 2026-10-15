@@ -118,3 +118,7 @@ node scripts/backup.mjs restore data/backups/<时间目录> data-restored
 ## 许可证
 
 MiniStation 使用 [MIT License](LICENSE)。第三方代码与模型保留各自的许可证；参见 `examples/jev-cpu/vendor/LICENSE`、`examples/jev-cpu/vendor/THIRD_PARTY.md` 和 `examples/jev-cpu/provenance.json`。模型权重不随源码分发。
+
+## 实验性分布式推理
+
+“工作空间 → 分布式推理”提供 SGLang 跨节点 TP 模型组配置、预检、创建、状态与清理。此版本已验证管理流程和 Kubernetes 清单，尚未通过真实 GPU 推理验收。硬件前提、操作方法及限制见 [分布式推理说明](docs/DISTRIBUTED.md)。

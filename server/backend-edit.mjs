@@ -8,6 +8,7 @@ export function installBackendEdit(app,s,config,{get,write,audit}){
   const {version,api_key,...data}=backendSchema.extend({version:z.number().int().positive()}).parse(req.body);
   data.base_url=assertURL(data.base_url,config.upstreamHosts);
   if(data.deployment_id!==undefined&&data.deployment_id!==old.deployment_id)fail(422,'DEPLOYMENT_IMMUTABLE','关联部署不可在此修改');
+  if(data.distributed_id!==undefined&&data.distributed_id!==old.distributed_id)fail(422,'DEPLOYMENT_IMMUTABLE','关联模型组不可在此修改');
   const changed=['base_url','upstream_model','protocol','timeout_seconds'].filter(k=>data[k]!==old[k]);
   const rotate=typeof api_key==='string'&&api_key.length>0;
   const invalidate=changed.length>0||rotate;

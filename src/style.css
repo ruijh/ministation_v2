@@ -5,3 +5,5 @@
 .request-trend{padding:0 22px 22px;display:grid;gap:8px}.request-trend>div{display:flex;align-items:center;gap:12px;font-size:12px}.request-trend meter{flex:1;min-width:35px}.request-trend time{min-width:42px}.deployment-timeline{padding-left:22px}.deployment-timeline li{padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}.deployment-timeline time{display:block;color:var(--muted);font-size:12px;margin-bottom:6px}.deployment-timeline p{margin:8px 0}.deployment-timeline small{display:block;line-height:1.7}
 
 aside nav{overflow-y:auto;min-height:0;flex:1}.editor-panel h2{margin-bottom:18px}.field>input[type=checkbox]{width:22px;height:22px}.panel>.hint{margin:0 22px 18px}
+
+.distributed-panel{padding:24px}.distributed-panel h2,.distributed-panel h3{margin-bottom:12px}.distributed-panel p{line-height:1.7;margin-bottom:14px}.distributed-panel .form-grid{margin:18px 0}.distributed-panel button+button{margin-left:8px}.distributed-error{white-space:pre-line}.distributed-panel details{margin:16px 0}@media(max-width:600px){.distributed-panel{padding:16px}}

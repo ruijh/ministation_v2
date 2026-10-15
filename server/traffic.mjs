@@ -10,6 +10,7 @@ export class Traffic{
  enter(r,rid){
   if(r.draining)fail(503,'ROUTE_DRAINING','服务正在排空，请稍后重试');const ids=this.backendIds(r);
   if(ids.some(b=>this.blocked.has(this.s.get('backend',b,r.project_id)?.deployment_id)))fail(503,'DEPLOYMENT_DRAINING','关联部署正在安全缩容，请稍后重试');
+  if(ids.some(b=>{const backend=this.s.get('backend',b,r.project_id);return backend?.distributed_id&&this.s.get('distributed',backend.distributed_id,r.project_id)?.status!=='Ready';}))fail(503,'DISTRIBUTED_NOT_READY','分布式模型组未就绪');
   this.active.set(rid,{route:r.id,project:r.project_id,backendIds:ids});return ()=>this.active.delete(rid);
  }
  countRoute(id){return [...this.active.values()].filter(v=>v.route===id).length;}
