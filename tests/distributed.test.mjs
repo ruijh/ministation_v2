@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync} from 'node:fs';
 import {createApp} from '../server/app.mjs';
+import {distributedEngine,distributedEngineCatalog} from '../server/engines/index.mjs';
 import {distributedSchema,distributedManifests} from '../server/distributed.mjs';
 const image='registry.example/sglang@sha256:'+'a'.repeat(64);
 const input=()=>({name:'distributed test',image,nodes:['gpu-a','gpu-b'],gpus_per_node:1,cpu:1,memory_gib:2,model_pvc:'models',model_path:'/models/model',served_model:'test-model'});
@@ -41,4 +42,36 @@ test('partial creation is retained, safely cleanable, and scoped by project and 
 
 test('a failed preflight record without resources can never become Ready',async t=>{
  const h=await harness(t);h.setShared(false);const g=await h.api('/distributed',input(),201);assert.equal(g.status,'NeedsAttention');assert.equal(g.manifests.length,0);const checked=await h.api('/distributed/'+g.id+'/refresh',{});assert.equal(checked.status,'NeedsAttention');assert.throws(()=>h.traffic.enter({project_id:h.user.project_id,target_kind:'backend',target_id:h.store.put('backend',h.user.project_id,'blocked',{distributed_id:g.id}).id},'request'),/未就绪/);assert.equal((await h.api('/distributed/'+g.id+'/delete',{})).status,'Deleted');
+});
+
+
+test('vLLM adapter uses MP with headless followers and advertises each Pod IP',()=>{
+ const spec=distributedSchema.parse({...input(),engine:'vllm',gpus_per_node:4});const docs=distributedManifests(spec,'project','msd-vllm');
+ assert.equal(docs[0].spec.ports[0].port,29501);assert.equal(docs[1].spec.selector['ministation.io/rank'],'0');
+ for(let rank=0;rank<2;rank++){
+  const c=docs[rank+2].spec.template.spec.containers[0],arg=flag=>c.args[c.args.indexOf(flag)+1];
+  assert.deepEqual(c.command,['vllm']);assert.equal(c.args[0],'serve');assert.equal(c.args[1],spec.model_path);
+  assert.equal(arg('--distributed-executor-backend'),'mp');assert.equal(arg('--tensor-parallel-size'),'8');assert.equal(arg('--pipeline-parallel-size'),'1');assert.equal(arg('--data-parallel-size'),'1');
+  assert.equal(arg('--nnodes'),'2');assert.equal(arg('--node-rank'),String(rank));assert.equal(arg('--master-addr'),'msd-vllm-rendezvous.project.svc');assert.equal(arg('--master-port'),'29501');
+  assert.equal(c.args.includes('--headless'),rank>0);assert.equal(c.args.includes('--host'),rank===0);assert.equal(c.ports.some(p=>p.name==='http'),rank===0);
+  assert.equal(c.env.find(e=>e.name==='VLLM_HOST_IP').valueFrom.fieldRef.fieldPath,'status.podIP');
+  assert.equal(c.args.includes('--dist-init-addr'),false);assert.equal(c.args.includes('--tp-size'),false);assert.equal(c.args.includes('ray'),false);
+  assert.ok(rank?c.readinessProbe.exec:c.readinessProbe.httpGet);assert.equal(!!c.startupProbe,rank===0);
+ }
+});
+test('engine defaults preserve legacy SGLang records and reject unsupported engines',()=>{
+ const spec=distributedSchema.parse(input());assert.equal(spec.engine,'sglang');const legacy={...spec};delete legacy.engine;assert.deepEqual(distributedManifests(legacy,'p','msd-legacy'),distributedManifests(spec,'p','msd-legacy'));
+ assert.throws(()=>distributedSchema.parse({...input(),engine:'ray'}));assert.throws(()=>distributedManifests({...spec,engine:'__proto__'},'p','msd-invalid'),/不支持/);
+ assert.deepEqual(distributedEngineCatalog().map(e=>e.id),['sglang','vllm']);assert.equal(distributedEngine('vllm').topology({...spec,gpus_per_node:2}).tensor_parallel_size,4);
+});
+test('vLLM API shares quota, project protection, lifecycle and partial-failure cleanup',async t=>{
+ const h=await harness(t),spec={...input(),name:'vllm group',engine:'vllm'};
+ assert.deepEqual((await h.api('/distributed/engines')).map(e=>e.id),['sglang','vllm']);await h.api('/distributed/preview',{...spec,engine:'unsupported'},422);
+ const preview=await h.api('/distributed/preview',spec);assert.equal(preview.engine.id,'vllm');assert.equal(preview.topology.executor,'mp');assert.equal(preview.total.gpus,2);assert.equal(h.resources.size,0);
+ let g=await h.api('/distributed',spec,201);assert.equal(g.spec.engine,'vllm');assert.equal(g.status,'Starting');assert.equal(g.manifests[3].spec.template.spec.containers[0].args.includes('--headless'),true);
+ h.store.update('project',h.user.project_id,'system',{gpu_quota:2});await h.api('/distributed',{...input(),name:'sglang competing'},422);
+ g=await h.api('/distributed/'+g.id+'/refresh',{});assert.equal(g.status,'Ready');
+ const follower=[...h.resources.values()].find(r=>r.kind==='Deployment'&&r.spec.template.metadata.labels['ministation.io/rank']==='1');follower.status.availableReplicas=0;g=await h.api('/distributed/'+g.id+'/refresh',{});assert.equal(g.status,'Starting');
+ g=await h.api('/distributed/'+g.id+'/delete',{});assert.equal(g.status,'Deleted');assert.equal(h.resources.size,0);
+ h.setFailure(4);g=await h.api('/distributed',{...spec,name:'vllm partial'},201);assert.equal(g.status,'NeedsAttention');assert.equal(g.resources.length,3);assert.equal((await h.api('/distributed/'+g.id+'/delete',{})).status,'Deleted');
 });

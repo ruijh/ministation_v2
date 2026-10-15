@@ -1,3 +1,4 @@
+import {distributedEngine,distributedEngineIds,distributedEngineCatalog} from './engines/index.mjs';
 import {z} from 'zod';
 import {name,fail,deploymentManifest} from './domain.mjs';
 import {id,now} from './store.mjs';
@@ -5,18 +6,18 @@ import {routeBackendIds} from './traffic.mjs';
 
 const dns=z.string().regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/).max(63);
 export const distributedSchema=z.object({
- name,engine:z.literal('sglang').default('sglang'),image:z.string().regex(/^[^\s]+@sha256:[a-f0-9]{64}$/),
+ name,engine:z.enum(distributedEngineIds).default('sglang'),image:z.string().regex(/^[^\s]+@sha256:[a-f0-9]{64}$/),
  nodes:z.array(dns).min(2).max(8).refine(v=>new Set(v).size===v.length,'节点不能重复'),
  gpus_per_node:z.number().int().min(1).max(8),cpu:z.number().positive().max(1000),memory_gib:z.number().positive().max(10000),
  model_pvc:dns,model_path:z.string().regex(/^\/models(?:\/[a-zA-Z0-9_.-]+)*$/).refine(p=>!p.split('/').some(v=>v==='.'||v==='..'),'模型路径不能包含相对目录'),
  served_model:z.string().regex(/^[a-zA-Z0-9_.-]+$/).max(100),pool_id:z.string().optional(),labels:z.record(z.string(),z.string()).default({}),
 }).strict();
-export const groupSpec=v=>({name:v.name,kind:'llm',image:v.image,cpu:v.cpu,memory_gib:v.memory_gib,gpus:v.gpus_per_node,replicas:v.nodes.length,command:[],args:[],port:8000,health_path:'/health',model_pvc:v.model_pvc,model_mount:'/models',pool_id:v.pool_id,labels:v.labels,node_selector:{}});
+export const groupSpec=v=>({name:v.name,kind:'llm',image:v.image,cpu:v.cpu,memory_gib:v.memory_gib,gpus:v.gpus_per_node,replicas:v.nodes.length,command:[],args:[],port:distributedEngine(v.engine).info.api_port,health_path:'/health',model_pvc:v.model_pvc,model_mount:'/models',pool_id:v.pool_id,labels:v.labels,node_selector:{}});
 export function distributedUsage(s,project,exclude){return s.list('distributed',project).filter(g=>g.id!==exclude&&g.status!=='Deleted').reduce((a,g)=>({cpu:a.cpu+g.spec.cpu*g.spec.nodes.length,memory:a.memory+g.spec.memory_gib*g.spec.nodes.length,gpu:a.gpu+g.spec.gpus_per_node*g.spec.nodes.length}),{cpu:0,memory:0,gpu:0});}
 export function distributedManifests(v,namespace,prefix,nodeSelector={}){
- const group={'ministation.io/distributed':prefix},rankLabel='ministation.io/rank';
+ const engine=distributedEngine(v.engine),group={'ministation.io/distributed':prefix},rankLabel='ministation.io/rank';
  const rendezvous=prefix+'-rendezvous',address=rendezvous+'.'+namespace+'.svc';
- const services=[{apiVersion:'v1',kind:'Service',metadata:{name:rendezvous,namespace},spec:{clusterIP:'None',publishNotReadyAddresses:true,selector:{...group,[rankLabel]:'0'},ports:[{name:'rendezvous',port:20000,targetPort:20000}]}},{apiVersion:'v1',kind:'Service',metadata:{name:prefix,namespace},spec:{type:'ClusterIP',selector:{...group,[rankLabel]:'0'},ports:[{name:'http',port:8000,targetPort:8000}]}}];
+ const services=[{apiVersion:'v1',kind:'Service',metadata:{name:rendezvous,namespace},spec:{clusterIP:'None',publishNotReadyAddresses:true,selector:{...group,[rankLabel]:'0'},ports:[{name:'rendezvous',port:engine.info.rendezvous_port,targetPort:engine.info.rendezvous_port}]}},{apiVersion:'v1',kind:'Service',metadata:{name:prefix,namespace},spec:{type:'ClusterIP',selector:{...group,[rankLabel]:'0'},ports:[{name:'http',port:engine.info.api_port,targetPort:engine.info.api_port}]}}];
  const deployments=v.nodes.map((node,rank)=>{
   const [d]=deploymentManifest({...groupSpec(v),replicas:1,node_selector:{...nodeSelector,'kubernetes.io/hostname':node}},namespace,prefix+'-'+rank);
   d.spec.strategy={type:'Recreate'};d.spec.template.metadata.labels={...d.spec.template.metadata.labels,...group,[rankLabel]:String(rank)};
@@ -24,11 +25,10 @@ export function distributedManifests(v,namespace,prefix,nodeSelector={}){
   const pod=d.spec.template.spec;delete pod.topologySpreadConstraints;
   pod.terminationGracePeriodSeconds=60;
   pod.volumes.push({name:'shm',emptyDir:{medium:'Memory',sizeLimit:`${Math.min(1,v.memory_gib/4)}Gi`}});
-  const c=pod.containers[0];c.command=['python3','-m','sglang.launch_server'];
-  c.args=['--model-path',v.model_path,'--served-model-name',v.served_model,'--tp-size',String(v.nodes.length*v.gpus_per_node),'--nnodes',String(v.nodes.length),'--node-rank',String(rank),'--dist-init-addr',address+':20000','--host','0.0.0.0','--port','8000'];
-  c.env=[{name:'HF_HUB_OFFLINE',value:'1'},{name:'TRANSFORMERS_OFFLINE',value:'1'},{name:'HF_HOME',value:'/tmp/huggingface'}];
-  c.volumeMounts.push({name:'shm',mountPath:'/dev/shm'});c.ports.push({name:'rendezvous',containerPort:20000});
-  if(rank){delete c.startupProbe;c.readinessProbe={exec:{command:['python3','-c',`import urllib.request; urllib.request.urlopen('http://${address}:8000/health',timeout=2).close()`]},periodSeconds:10,timeoutSeconds:3};}
+  const c=pod.containers[0];delete c.startupProbe;delete c.readinessProbe;
+  Object.assign(c,engine.member(v,{rank,address}));
+  c.volumeMounts.push({name:'shm',mountPath:'/dev/shm'});
+  c.ports=[...(rank?[]:[{name:'http',containerPort:engine.info.api_port}]),{name:'rendezvous',containerPort:engine.info.rendezvous_port}];
   return d;
  });
  return [...services,...deployments].map(d=>({...d,metadata:{...d.metadata,labels:{...d.metadata.labels,...group,'app.kubernetes.io/managed-by':'ministation-distributed'}}}));
@@ -46,7 +46,7 @@ export function installDistributed(app,{s,kube,governance,checkDeployment,get,wr
   const pvc=await kube.request(`/api/v1/namespaces/${p.namespace}/persistentvolumeclaims/${v.model_pvc}`);
   if(pvc.status?.phase!=='Bound'||!(pvc.spec?.accessModes||[]).some(m=>['ReadOnlyMany','ReadWriteMany'].includes(m)))fail(422,'SHARED_MODEL_REQUIRED','模型卷必须已绑定且支持 ReadOnlyMany 或 ReadWriteMany');
   await kube.assertQuota(p.namespace);
-  return {spec:v,namespace:p.namespace,node_selector:spec.node_selector,total:{nodes:v.nodes.length,gpus:v.nodes.length*v.gpus_per_node,cpu:v.nodes.length*v.cpu,memory_gib:v.nodes.length*v.memory_gib},warnings:['实验性 SGLang TP 编排；没有 GPU 推理实测认证。','容量检查不是资源预留或 gang scheduling；并发原生工作负载仍可能占用资源。','需要跨 Pod 通信、兼容的 GPU/驱动/引擎及相同模型文件；不自动开启 hostNetwork、RDMA 或特权模式。']};
+  return {engine:distributedEngine(v.engine).info,topology:distributedEngine(v.engine).topology(v),spec:v,namespace:p.namespace,node_selector:spec.node_selector,total:{nodes:v.nodes.length,gpus:v.nodes.length*v.gpus_per_node,cpu:v.nodes.length*v.cpu,memory_gib:v.nodes.length*v.memory_gib},warnings:[`实验性 ${distributedEngine(v.engine).info.label} TP 编排；没有 GPU 推理实测认证。`,distributedEngine(v.engine).info.requirement,'容量检查不是资源预留或 gang scheduling；并发原生工作负载仍可能占用资源。','需要跨 Pod 通信、兼容的 GPU/驱动/引擎及相同模型文件；不自动开启 hostNetwork、RDMA 或特权模式。']};
  }
  async function inspect(g){
   const members=[];let ready=g.manifests.length===g.spec.nodes.length+2&&g.resources.length===g.manifests.length,error=ready?null:'创建记录不完整，需要人工核对或清理';
@@ -57,6 +57,7 @@ export function installDistributed(app,{s,kube,governance,checkDeployment,get,wr
   return save(g,{status,members,error,checked_at:now()});
  }
  async function refresh(g){g=s.get('distributed',g.id,g.project_id);if(!g||locks.has(g.id)||['Deleted','Deleting','Creating'].includes(g.status))return g;locks.add(g.id);try{return await inspect(g);}finally{locks.delete(g.id);}}
+ app.get('/api/distributed/engines',(_req,res)=>res.json(distributedEngineCatalog()));
  app.get('/api/distributed',(_req,res)=>res.json(s.list('distributed',_req.project)));
  app.post('/api/distributed/preview',async(req,res)=>{write(req,true);const p=await plan(req.body,req);const manifests=distributedManifests(p.spec,p.namespace,'msd-preview',p.node_selector);governance.native(manifests,req.project);for(const m of manifests)await kube.dryRun(m);res.json({...p,manifests});});
  app.post('/api/distributed',async(req,res)=>{
@@ -65,7 +66,7 @@ export function installDistributed(app,{s,kube,governance,checkDeployment,get,wr
   const spec=governance.enforce(governance.prepare(groupSpec(v),req.project),req.project),check=checkDeployment(spec,req);if(!check.valid)fail(422,'PREFLIGHT_FAILED','分布式模型组预检未通过',check.checks);
   let g=s.put('distributed',req.project,v.name,{spec:v,status:'Creating',resources:[],manifests:[]});locks.add(g.id);
   audit(req,'distributed.create',g.id);
-  try{const p=await plan(v,req,g.id),manifests=distributedManifests(v,p.namespace,'msd-'+g.id.slice(0,8),p.node_selector);governance.native(manifests,req.project);g=save(g,{manifests,endpoint:`http://msd-${g.id.slice(0,8)}.${p.namespace}.svc:8000/v1`});for(const m of manifests)await kube.dryRun(m);const freshSpec=governance.enforce(governance.prepare(groupSpec(v),req.project),req.project);if(!checkDeployment(freshSpec,req,g.id).valid)fail(422,'PREFLIGHT_FAILED','创建前项目配额已变化');for(const m of manifests){const created=await kube.apply(m);if(!created.metadata?.uid)throw Error('集群响应缺少 UID');g=save(g,{resources:[...g.resources,{kind:m.kind,name:m.metadata.name,uid:created.metadata.uid}]});}g=save(g,{status:'Starting'});}catch(e){g=save(g,{status:'NeedsAttention',error:e.message});audit(req,'distributed.create.failed',g.id,{code:e.code||'UNKNOWN'});}finally{locks.delete(g.id);}
+  try{const p=await plan(v,req,g.id),manifests=distributedManifests(v,p.namespace,'msd-'+g.id.slice(0,8),p.node_selector);governance.native(manifests,req.project);g=save(g,{manifests,endpoint:`http://msd-${g.id.slice(0,8)}.${p.namespace}.svc:${distributedEngine(v.engine).info.api_port}/v1`});for(const m of manifests)await kube.dryRun(m);const freshSpec=governance.enforce(governance.prepare(groupSpec(v),req.project),req.project);if(!checkDeployment(freshSpec,req,g.id).valid)fail(422,'PREFLIGHT_FAILED','创建前项目配额已变化');for(const m of manifests){const created=await kube.apply(m);if(!created.metadata?.uid)throw Error('集群响应缺少 UID');g=save(g,{resources:[...g.resources,{kind:m.kind,name:m.metadata.name,uid:created.metadata.uid}]});}g=save(g,{status:'Starting'});}catch(e){g=save(g,{status:'NeedsAttention',error:e.message});audit(req,'distributed.create.failed',g.id,{code:e.code||'UNKNOWN'});}finally{locks.delete(g.id);}
   res.status(201).json(g);
  });
  app.post('/api/distributed/:id/refresh',async(req,res)=>{write(req);res.json(await refresh(get('distributed',req)));});

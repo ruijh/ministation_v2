@@ -111,3 +111,5 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 ## 实验性分布式模型组
 
 新增 `/api/distributed` 列表与创建、`/api/distributed/preview` 预检、`/api/distributed/:id/refresh` 同步、`/api/distributed/:id/delete` 清理。模型组按项目隔离，创建与清理仅管理员可操作；`POST /api/backends` 可通过 `distributed_id` 关联就绪组。具体参数、部分失败语义与边界见 [分布式推理说明](DISTRIBUTED.md)。
+
+分布式引擎目录：`GET /api/distributed/engines`。创建和预检请求接受 `engine: "sglang" | "vllm"`，省略时兼容默认 SGLang。vLLM 固定使用多节点 MP 执行器和全局 TP；预检返回引擎元数据及 `topology`。未知引擎返回 422，已有模型组不自动切换引擎。
