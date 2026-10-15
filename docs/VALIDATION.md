@@ -104,3 +104,10 @@ README 待办可行性检查另见 [本地开发候选](LOCAL-DEVELOPMENT.md)，
 - `npm run test:e2e`：完整浏览器流程通过，包含队列配置、版本与演练入口、Webhook 新建及启停。截图 `artifacts/e2e/queue-recovery.png`、`webhooks.png`。
 - 使用本地现有数据执行独立目录恢复演练：备份、哈希验证、结构升级、业务表记录数及凭据解密检查均通过；源运行数据未迁移或覆盖。报告与备份留在受控数据目录，不纳入源码仓库。
 - 未向真实外部告警渠道发送测试消息；未验证多控制面排队、异机灾备或生产 RTO/RPO。
+
+## 2026-10-15：部署向导、接入发布与故障建议
+
+- `npm run check`：前端生产构建与 40 项测试通过。新增覆盖两种引擎的参数与共享内存清单、TP/GPU 冲突、模型路径、PVC/节点容量不足、集群不可观测、项目/角色隔离和本地真实 HTTP 探测后的发布门禁。
+- `npm run test:e2e`：完整浏览器流程通过。覆盖向导填表、预检错误、修改输入使结果失效、保存草稿、验证前禁止发布、诊断建议和 390px 移动布局。浏览器接入及诊断阶段采用明确的合成就绪状态；实际协议与权限门禁由 API 集成测试验证。
+- 真实 Kubernetes 对 vLLM 与 SGLang 基础模板共 4 个 Deployment/Service 资源的服务端 dry-run 通过；没有创建占位模型容器。集群 GPU 数为 0，未执行 GPU 模型推理。
+- 截图位于本地 `artifacts/e2e/deployment-wizard.png`、`deployment-wizard-mobile.png`、`deployment-onboarding.png`、`deployment-diagnostics.png`，不纳入源码交付。

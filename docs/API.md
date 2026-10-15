@@ -106,7 +106,7 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 
 `MINISTATION_PROMETHEUS_URL` 为管理员启动时配置的内部 Prometheus 地址，不接收浏览器传入的任意监控 URL。后端使用固定 namespace/pod 查询；DCGM 必须提供 namespace/pod 标签。无数据返回 null。
 
-自动化及发布行为的边界见 OPERATIONS.md；控制台告警不发送外部消息，缩容排空不覆盖绕过网关的直连请求。
+自动化及发布行为的边界见 OPERATIONS.md；外部通知需配置并启用 Webhook，缩容排空不覆盖绕过网关的直连请求。
 
 ## 实验性分布式模型组
 
@@ -136,3 +136,17 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 - `GET /api/settings` 新增 `schema_version`。
 
 投递语义、队列错误码和数据迁移说明见 [运维指南](DELIVERY.md)。
+
+## 部署向导与接入建议
+
+| 接口 | 行为 |
+| --- | --- |
+| GET /api/deployment-guide/templates | 返回单节点 vLLM / SGLang 基础模板目录 |
+| POST /api/deployment-guide/preview | 非只读角色；生成 spec，返回 valid/checks/warnings；不创建工作负载 |
+| GET /api/deployments/:id/onboarding | 当前项目部署的就绪状态、建议地址/模型名、已有后端和发布记录 |
+| GET /api/distributed/:id/onboarding | 当前项目分布式组的同类接入建议 |
+| GET /api/deployments/:id/diagnostics | 原有 pods/events 外新增 findings（code/title/evidence/action/scope）和 observed_at |
+
+向导请求字段：`name,engine,image,model_pvc,model_path,served_model,cpu,memory_gib,gpus,tensor_parallel`，可选 `shared_memory_gib`（默认 1）、`pool_id,model_id`。GPU/TP 必须相等且为正整数；路径位于 `/models/` 下；共享内存上限小于容器内存。响应中的 spec 可提交原有 `POST /api/deployments` 保存草稿；普通部署配置新增可选 `shared_memory_gib`，表示内存型 emptyDir 的 GiB 上限。
+
+onboarding 为只读建议，不修改允许主机列表、不返回凭据、不跳过现有接入/探测/发布门禁。写入继续使用 `/api/backends`、`/api/backends/:id/probe` 和 `/api/routes`。完整流程与限制见 [部署与调用指南](DEPLOYMENT-GUIDE.md)。
