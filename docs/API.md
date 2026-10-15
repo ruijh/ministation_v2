@@ -76,9 +76,9 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 - `POST /api/deployments/:id/refresh`：手动触发同一观测逻辑。正在创建或修订中的对象由写操作完成后再观测，避免覆盖并发操作。
 - `GET /api/metrics?hours=24`：1–168 小时窗口（默认 24）；按项目顶层账本请求统计请求量、失败率、P95 延迟、P95 首 Token、窗口内在途请求、逻辑模型和小时分桶。不含入账前的鉴权或配额拒绝；不重复计算子调用。无样本为 null；PROCESS_RESTARTED 单独计入未知，不混入失败率分母。
 
-观测器负责状态同步、故障解释及重启后核对，不自动重放中断写操作或自动修复集群配置。Deployment/Service 存在且容器探针通过不等同于端到端模型调用健康。后续第二至第四轮已补充资源指标、控制台告警及自动伸缩，详见下节。
+观测器负责状态同步、故障解释及重启后核对，不自动重放中断写操作或自动修复集群配置。Deployment/Service 存在且容器探针通过不等同于端到端模型调用健康。后续资源治理、发布与伸缩已补充资源指标、控制台告警及自动伸缩，详见下节。
 
-## 第二至第四轮接口
+## 资源治理、发布与伸缩接口
 
 | 接口 | 权限与行为 |
 | --- | --- |
@@ -106,7 +106,7 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 
 `MINISTATION_PROMETHEUS_URL` 为管理员启动时配置的内部 Prometheus 地址，不接收浏览器传入的任意监控 URL。后端使用固定 namespace/pod 查询；DCGM 必须提供 namespace/pod 标签。无数据返回 null。
 
-自动化及发布行为的边界见 OPERATIONS-ROUNDS.md；控制台告警不发送外部消息，缩容排空不覆盖绕过网关的直连请求。
+自动化及发布行为的边界见 OPERATIONS.md；控制台告警不发送外部消息，缩容排空不覆盖绕过网关的直连请求。
 
 ## 实验性分布式模型组
 
@@ -124,3 +124,15 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 ```
 
 `nodes` 前 `prefill_nodes` 个为 P，其余为 D，必须各至少一个。每节点 GPU 数是每实例 TP，所有节点互不重复。PD 的 `total` 包含路由器额外 0.5 CPU / 0.5 GiB，`topology` 返回 P/D 数与 connector；`members` 含 role。TP 模式禁止 `pd` 参数，PD 禁止 SGLang、未知字段或无 Decode 的组合。所有原有项目、角色、策略、UID 清理与发布保护继续生效。详细限制见 [PD 说明](PD.md)。
+
+## 告警通知与请求队列
+
+- `GET /api/webhooks`：管理员读取当前项目渠道、最近 100 条投递记录、目标主机允许列表；不返回 URL 或签名密钥。
+- `POST /api/webhooks`：管理员创建 `{name,url,signing_secret,enabled}`，默认禁用。签名密钥至少 16 字符，目标主机须在 `MINISTATION_WEBHOOK_HOSTS` 内。
+- `POST /api/webhooks/:id/toggle`：管理员提交 `{version,enabled}`；禁用取消等待投递。
+- `POST /api/webhooks/:id/test`：管理员向启用渠道排入测试事件，返回 202；不代表投递已成功。
+- `GET /api/request-queue`：读取当前项目队列 policy/state。
+- `POST /api/request-queue`：管理员提交 `{enabled,max_active,max_waiting,wait_seconds,version?}`；更新需版本，有在途或等待请求时返回 409。
+- `GET /api/settings` 新增 `schema_version`。
+
+投递语义、队列错误码和数据迁移说明见 [运维指南](DELIVERY.md)。

@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {fail,name} from './domain.mjs';
-import {now} from './store.mjs';
+import {now,id} from './store.mjs';
 import {quantity} from './governance.mjs';
 import {summarizeRequests} from './operations.mjs';
 
@@ -15,7 +15,7 @@ export function scalingDecision(spec,current,value,lowSamples=0){
  if(low>=spec.down_samples)return {replicas:Math.max(spec.min_replicas,Math.min(spec.max_replicas,current-1)),low_samples:0,reason:'连续低负载，缩减一个副本'};
  return {replicas:current,low_samples:low,reason:low?'等待低负载稳定窗口':'处于目标区间'};
 }
-export function createRuntime({s,kube,config,traffic,governance,checkDeployment}){
+export function createRuntime({s,kube,config,traffic,governance,checkDeployment,webhooks}){
  let timer,work=null,stopped=false;const locks=new Set();
  function assertUnlocked(did){if(locks.has(did))fail(409,'SCALING_IN_PROGRESS','弹性伸缩正在进行，请稍后重试');}
  function save(kind,project,key,data){const old=s.get(kind,key,project);return old?s.update(kind,key,project,data):s.put(kind,project,data.name||key,data,key);}
@@ -53,8 +53,9 @@ export function createRuntime({s,kube,config,traffic,governance,checkDeployment}
    }
    const streak=value!=null&&value>rule.threshold?(previous?.streak||0)+1:0;
    const status=!rule.enabled?'Disabled':value==null?'Unknown':streak>=rule.consecutive?'Firing':value>rule.threshold?'Pending':'Resolved';
-   const changed=status!==previous?.status;save('alert_state',project,'alert:'+rule.id,{rule_id:rule.id,name:rule.name,metric:rule.metric,value,threshold:rule.threshold,status,streak,checked_at:now(),changed_at:changed?now():previous.changed_at,acknowledged:changed?false:previous.acknowledged});
+   const changed=status!==previous?.status;const opened=!!previous?.incident_open,notification=status==='Firing'&&!opened?'alert.firing':status==='Resolved'&&opened?'alert.resolved':null;s.tx(()=>{save('alert_state',project,'alert:'+rule.id,{incident_open:status==='Firing'?true:status==='Resolved'?false:opened,rule_id:rule.id,name:rule.name,metric:rule.metric,value,threshold:rule.threshold,status,streak,checked_at:now(),changed_at:changed?now():previous.changed_at,acknowledged:changed?false:previous.acknowledged});
    if(changed)s.audit(project,'controller','alert.'+status.toLowerCase(),rule.id,{metric:rule.metric,value,threshold:rule.threshold});
+   if(notification)webhooks?.enqueue(project,{id:id(),type:notification,project_id:project,at:now(),rule_id:rule.id,name:rule.name,metric:rule.metric,value,threshold:rule.threshold});});
   }
  }
  async function scale(policy,project){

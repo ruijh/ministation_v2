@@ -48,29 +48,31 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 - 串行、融合、流量、条件及决策路由编排节点；树形嵌套校验与不可变服务流记录。
 - 服务探测、逻辑模型发布、Key 授权、RPM/TPM/预算预占、Chat/SSE/Embedding/Decision 网关。
 - 真实上游 usage 入账、费率计算、缺失 usage 待核对、人工核对审计、CSV 导出。
-- 集群节点与调度开关；本地数据库和加密凭据备份/恢复。
+- 集群节点与调度开关；本地数据库和加密凭据备份/恢复、结构版本检查与隔离恢复演练。
+- 通用 Webhook 告警通知：加密凭据、签名、有限重试和投递记录。
+- 项目级 FIFO 请求队列：并发与等待上限、超时取消、出队权限及预算复核。
 
-## 新增运行管理能力
+## 运行管理
 
 - “服务部署 → 保存模板”：从已就绪服务保存配置；“部署模板 → 使用模板”回填新部署草稿。
 - “服务部署 → 运行状态”：查看后台 Kubernetes 观测、故障建议和持久时间线。控制面重启后自动核对，保留中断任务供检查。
 - “服务指标”：查看最近 24 小时请求数、失败率、P95 延迟、首 Token 和小时趋势；仅使用真实账本记录，排除编排子调用重复计数。
 - 更新后需重新启动控制台进程，后台观测器才会启用；界面静态资源通过 `npm run build` 更新。
 
-## 第二至第四轮能力
+## 资源治理、监控与发布
 
-新增“资源池与容量”“项目策略”“监控告警”“发布管理”“弹性伸缩”页面：
+通过“资源池与容量”“项目策略”“监控告警”“发布管理”“弹性伸缩”页面管理：
 
 - 项目节点池、真实容量/申请量，以及统一部署策略。
 - Prometheus / Metrics Server / DCGM 数据适配与控制台阈值告警。
 - 候选版本灰度、指标自动回退、明确 HTTP 拒绝后的备用切换和 SSE 排空。
 - CPU 或每副本在途请求驱动的弹性伸缩，包含冷却、配额预检与缩容排空。
 
-运行边界、功能说明、安装与验收见 [第二至第四轮运维说明](docs/OPERATIONS-ROUNDS.md)。本地 Metrics Server 安装脚本为 `infra/wsl/Install-Metrics.ps1`；生产监控可通过 `MINISTATION_PROMETHEUS_URL` 接入已有 Prometheus。GPU 采集尚无本机硬件验收。
+运行边界、功能说明、安装与验收见 [资源治理与运维说明](docs/OPERATIONS.md)。本地 Metrics Server 安装脚本为 `infra/wsl/Install-Metrics.ps1`；生产监控可通过 `MINISTATION_PROMETHEUS_URL` 接入已有 Prometheus。GPU 采集尚无本机硬件验收。
 
 ## 测试
 
-要求 Node.js 24+。本机已安装依赖，重新安装执行 `npm.cmd ci`。
+要求 Node.js 24+，安装依赖执行 `npm.cmd ci`。
 
 ```powershell
 # 在 MiniStation 项目根目录执行
@@ -108,11 +110,11 @@ node scripts/backup.mjs restore data/backups/<时间目录> data-restored
 
 根目录 Dockerfile 提供 Linux 镜像构建入口。首次构建需要访问 npm 和基础镜像仓库；容器镜像构建与完整断网安装尚未验收。运行时必须挂载持久 `/data`，并设置 `MINISTATION_BOOTSTRAP_TOKEN` 才能绑定非回环地址。Kubernetes Token / CA 使用只读文件挂载，并通过环境变量指定。企业暴露服务前应配置 HTTPS 反向代理；当前本机入口仅监听 127.0.0.1。
 
-更多：[API 边界](docs/API.md) · [需求覆盖与限制](docs/COVERAGE.md) · [本轮验证记录](docs/VALIDATION.md) · [WSL 集群说明](infra/wsl/README.md)。
+更多：[API 边界](docs/API.md) · [需求覆盖与限制](docs/COVERAGE.md) · [验证记录](docs/VALIDATION.md) · [WSL 集群说明](infra/wsl/README.md)。
 
 ## CPU 决策服务
 
-新增 JEV-CPU / Qwen3-0.6B 纯 CPU 决策接入、结构化调试与决策路由。统一入口为 /v1/decisions；详细协议、部署和限制见 [决策服务](docs/DECISIONS.md)。
+支持 JEV-CPU / Qwen3-0.6B 纯 CPU 决策接入、结构化调试与决策路由。统一入口为 /v1/decisions；详细协议、部署和限制见 [决策服务](docs/DECISIONS.md)。
 
 
 ## 许可证
@@ -127,4 +129,12 @@ MiniStation 使用 [MIT License](LICENSE)。第三方代码与模型保留各自
 
 分布式推理页面支持实验性 vLLM + NIXL PD 分离，提供均衡对话、长输入、长输出三种调优起点，支持参数调整、P/D 拓扑与资源汇总、策略与配额预检、创建和清理。预设不是硬件最优认证；真实 KV 传输与性能仍待 GPU 验收。操作和限制见 [PD 部署说明](docs/PD.md)。
 
-README 待开发事项的本地可行性检查见 [当前环境可推进的功能](docs/LOCAL-DEVELOPMENT.md)，区分本地测试、真实集群验证和外部资源前提。
+
+
+## 通知、排队与升级恢复
+
+- “监控告警 → 外部告警通知”：配置 Webhook，启用后发送告警触发和恢复事件。管理员须先设置 `MINISTATION_WEBHOOK_HOSTS`。
+- “平台设置 → 网关请求排队”：配置项目在途上限、等待容量和最长等待时间，默认关闭。
+- “平台设置 → 升级与恢复演练”：查看数据库结构版本和隔离演练命令。
+
+配置方法、签名协议、重试与升级边界见 [通知、排队与恢复指南](docs/DELIVERY.md)。

@@ -1,3 +1,4 @@
+import {checkSchema,migrate} from './migrations.mjs';
 import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -8,7 +9,7 @@ export const hash=s=>createHash('sha256').update(s).digest('hex');
 export function passwordHash(p){const salt=randomBytes(16).toString('hex');return `${salt}:${scryptSync(p,salt,64).toString('hex')}`;}
 export function passwordMatches(p,h){try{const[s,v]=h.split(':');return timingSafeEqual(Buffer.from(v,'hex'),scryptSync(p,s,64));}catch{return false;}}
 export class Store{
- constructor(dir){this.dir=resolve(dir);mkdirSync(this.dir,{recursive:true});const key=join(this.dir,'master.key');if(!existsSync(key)&&existsSync(join(this.dir,'ministation.db')))throw new Error('Existing database has no master.key; restore the matching key before startup');if(!existsSync(key))writeFileSync(key,randomBytes(32),{mode:0o600,flag:'wx'});this.key=readFileSync(key);this.db=new DatabaseSync(join(this.dir,'ministation.db'));this.db.exec(`
+ constructor(dir){this.dir=resolve(dir);mkdirSync(this.dir,{recursive:true});const key=join(this.dir,'master.key');if(!existsSync(key)&&existsSync(join(this.dir,'ministation.db')))throw new Error('Existing database has no master.key; restore the matching key before startup');if(!existsSync(key))writeFileSync(key,randomBytes(32),{mode:0o600,flag:'wx'});this.key=readFileSync(key);if(this.key.length!==32)throw Error('Invalid master.key length');this.db=new DatabaseSync(join(this.dir,'ministation.db'));try{checkSchema(this.db);}catch(e){this.db.close();throw e;}this.db.exec(`
  PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE,password TEXT,role TEXT,project_id TEXT,created_at TEXT);
  CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,expires INTEGER);
@@ -20,8 +21,8 @@ export class Store{
  CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,key_id TEXT,project_id TEXT,amount INTEGER,status TEXT,created INTEGER);
  CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,project_id TEXT,actor TEXT,action TEXT,target TEXT,details TEXT,created_at TEXT);
  CREATE TABLE IF NOT EXISTS idempotency(scope TEXT,key TEXT,digest TEXT,result TEXT,created INTEGER,PRIMARY KEY(scope,key));
- PRAGMA user_version=1;
- `);this.db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());}
+
+ `);try{migrate(this.db);}catch(e){this.db.close();throw e;}this.db.prepare('DELETE FROM sessions WHERE expires < ?').run(Date.now());}
  tx(fn){this.db.exec('BEGIN IMMEDIATE');try{const v=fn();this.db.exec('COMMIT');return v;}catch(e){this.db.exec('ROLLBACK');throw e;}}
  seal(v){if(!v)return null;const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',this.key,iv);const out=Buffer.concat([c.update(v,'utf8'),c.final()]);return [iv,c.getAuthTag(),out].map(b=>b.toString('base64')).join('.');}
  unseal(v){if(!v)return '';const [iv,tag,b]=v.split('.').map(x=>Buffer.from(x,'base64'));const c=createDecipheriv('aes-256-gcm',this.key,iv);c.setAuthTag(tag);return Buffer.concat([c.update(b),c.final()]).toString();}
