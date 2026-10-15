@@ -12,7 +12,7 @@ MiniStation 支持创建一个跨 2–8 个 Kubernetes 节点的 SGLang 或 vLLM
 - [SGLang 资源选择器](https://github.com/gpustack/gpustack/blob/e8924525eaf558284594eae440508a1ed1f9d524/gpustack/policies/candidate_selectors/sglang_resource_fit_selector.py)：研究并行拓扑与设备分配约束。
 - [SGLang 多节点说明](https://docs.sglang.ai/references/multi_node_deployment/multi_node.html)：核对 `--tp-size`、`--nnodes`、`--node-rank`、`--dist-init-addr` 等引擎参数的职责。
 
-本实现没有复制第三方源码。GPUStack 采用自身 Worker 与调度管理体系；MiniStation 本轮使用 Kubernetes 原生 Deployment 和 Service，并沿用项目配额、策略及审计。vLLM 采用原生多节点 Multiprocessing（MP）执行器。暂不引入 Ray、流水线并行（PP）、数据并行（DP）或预填充/解码分离（PD）。
+本实现没有复制第三方源码。GPUStack 采用自身 Worker 与调度管理体系；MiniStation 本轮使用 Kubernetes 原生 Deployment 和 Service，并沿用项目配额、策略及审计。vLLM 采用原生多节点 Multiprocessing（MP）执行器。TP 模式暂不引入 Ray、流水线并行（PP）或数据并行（DP）。独立的 PD 模式见文末链接。
 
 | 设计项 | 首版实现 | 边界 |
 | --- | --- | --- |
@@ -111,4 +111,8 @@ vLLM 的参数及 headless 行为已按官方 [v0.31.0 CLI 源码](https://githu
 
 2026-10-15 已通过本地集群对两种引擎合计 4 个 Service 和 4 个 Deployment 的 dry-run。集群可分配 GPU 数为 **0**，因此真实分布式推理仍未验收。结果写入不随源码发布的 `artifacts/distributed/admission.json`。
 
-后续硬件验收需要固定镜像和模型版本，完成：两节点加载、各 rank GPU 使用证据、真实请求与输出核验、失败节点退出后的组状态与网关阻断、重新部署恢复、排空清理、吞吐与延迟测量。硬件验收通过前不宣称此路径可生产使用。PP、Ray 执行器、PD、gang scheduling、组级自动恢复与自动伸缩属于后续范围。
+后续硬件验收需要固定镜像和模型版本，完成：两节点加载、各 rank GPU 使用证据、真实请求与输出核验、失败节点退出后的组状态与网关阻断、重新部署恢复、排空清理、吞吐与延迟测量。硬件验收通过前不宣称此路径可生产使用。PP、Ray 执行器、跨节点 TP 与 PD 嵌套、gang scheduling、组级自动恢复与自动伸缩属于后续范围。
+
+## PD 扩展
+
+本页描述 TP 模式。新增的 vLLM/NIXL PD 模式不使用全局跨节点 TP，而是在每个 P/D 实例内部使用本节点 GPU；独立路由器组织两阶段请求。PD 参数、预设和边界见 [PD 部署说明](PD.md)。首版不支持跨节点 TP 与 PD 嵌套。

@@ -7,3 +7,14 @@
 aside nav{overflow-y:auto;min-height:0;flex:1}.editor-panel h2{margin-bottom:18px}.field>input[type=checkbox]{width:22px;height:22px}.panel>.hint{margin:0 22px 18px}
 
 .distributed-panel{padding:24px}.distributed-panel h2,.distributed-panel h3{margin-bottom:12px}.distributed-panel p{line-height:1.7;margin-bottom:14px}.distributed-panel .form-grid{margin:18px 0}.distributed-panel button+button{margin-left:8px}.distributed-error{white-space:pre-line}.distributed-panel details{margin:16px 0}@media(max-width:600px){.distributed-panel{padding:16px}}
+
+.pd-options{margin:20px 0;padding:20px;border:1px solid var(--border,#d7dde5);border-radius:12px;background:var(--bg,#f6f8fb)}
+.pd-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0}
+.pd-presets button{text-align:left;white-space:normal;display:flex;flex-direction:column;gap:8px;height:100%;padding:16px;min-height:44px}
+.pd-presets button[aria-pressed=true]{outline:2px solid #2563eb;outline-offset:2px}
+.pd-presets small{font-size:13px;line-height:1.6;font-weight:400}
+.pd-summary{padding:16px;border-left:3px solid #2563eb;margin:16px 0;background:#eef4ff;color:#20334d}
+.pd-options summary{cursor:pointer;padding:12px 0;font-weight:600}.pd-options input{max-width:100%}
+@media(max-width:800px){.pd-presets{grid-template-columns:1fr}.pd-options{padding:12px}}
+
+.distributed-panel .pd-presets button+button{margin-left:0}.pd-presets button{align-items:flex-start;justify-content:flex-start}.pd-presets small{color:#42576a}

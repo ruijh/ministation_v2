@@ -75,3 +75,23 @@ test('vLLM API shares quota, project protection, lifecycle and partial-failure c
  g=await h.api('/distributed/'+g.id+'/delete',{});assert.equal(g.status,'Deleted');assert.equal(h.resources.size,0);
  h.setFailure(4);g=await h.api('/distributed',{...spec,name:'vllm partial'},201);assert.equal(g.status,'NeedsAttention');assert.equal(g.resources.length,3);assert.equal((await h.api('/distributed/'+g.id+'/delete',{})).status,'Deleted');
 });
+
+const pdInput=()=>({...input(),engine:'vllm',mode:'pd',pd:{preset:'balanced',prefill_nodes:1,router_image:'registry.example/node@sha256:'+'b'.repeat(64),max_model_len:8192,prefill_batch:4096,decode_batch:2048,max_num_seqs:32,gpu_memory_utilization:0.85}});
+test('PD manifests separate P/D roles, use local TP and include a private router with bounded resources',()=>{
+ const spec=distributedSchema.parse(pdInput()),docs=distributedManifests(spec,'project','msd-pd');assert.equal(docs.length,7);
+ const pods=docs.filter(d=>d.kind==='Deployment');assert.equal(pods.length,3);
+ for(const [i,d] of pods.slice(0,2).entries()){const c=d.spec.template.spec.containers[0],args=c.args;assert.equal(args[args.indexOf('--tensor-parallel-size')+1],'1');assert.equal(JSON.parse(args[args.indexOf('--kv-transfer-config')+1]).kv_role,i?'kv_consumer':'kv_producer');assert.equal(c.env.find(e=>e.name==='VLLM_NIXL_SIDE_CHANNEL_HOST').valueFrom.fieldRef.fieldPath,'status.podIP');}
+ const router=pods[2].spec.template.spec;assert.equal(router.containers[0].resources.requests.cpu,'0.5');assert.equal(router.containers[0].resources.requests['nvidia.com/gpu'],undefined);assert.equal(router.volumes[0].configMap.name,'msd-pd-router');assert.equal(docs.at(-1).spec.selector['ministation.io/role'],'router');
+ assert.throws(()=>distributedSchema.parse({...pdInput(),engine:'sglang'}));assert.throws(()=>distributedSchema.parse({...pdInput(),pd:{...pdInput().pd,prefill_nodes:2}}));assert.throws(()=>distributedSchema.parse({...pdInput(),mode:'tp'}));
+});
+test('PD lifecycle counts router quota, enforces router image policy and gates readiness on every role',async t=>{
+ const h=await harness(t),v=pdInput();const presets=await h.api('/distributed/presets');assert.equal(presets.length,3);
+ h.store.update('project',h.user.project_id,'system',{cpu_quota:2});await h.api('/distributed/preview',v,422);h.store.update('project',h.user.project_id,'system',{cpu_quota:32});
+ await h.api('/policy',{allowed_registries:['registry.example']});await h.api('/distributed/preview',{...v,pd:{...v.pd,router_image:'unapproved.example/node@sha256:'+'b'.repeat(64)}},422);
+ const preview=await h.api('/distributed/preview',v);assert.equal(preview.total.cpu,2.5);assert.equal(preview.total.memory_gib,4.5);assert.equal(preview.topology.prefill,1);
+ let g=await h.api('/distributed',v,201);assert.equal(g.resources.length,7);g=await h.api('/distributed/'+g.id+'/refresh',{});assert.equal(g.status,'Ready');
+ const router=[...h.resources.values()].find(d=>d.kind==='Deployment'&&d.spec.template.metadata.labels['ministation.io/role']==='router');router.status.availableReplicas=0;assert.equal((await h.api('/distributed/'+g.id+'/refresh',{})).status,'Starting');
+ h.store.update('project',h.user.project_id,'system',{cpu_quota:4.4});await h.api('/distributed',input(),422);
+ assert.equal((await h.api('/distributed/'+g.id+'/delete',{})).status,'Deleted');assert.equal(h.resources.size,0);
+ h.setFailure(5);g=await h.api('/distributed',{...v,name:'PD partial'},201);assert.equal(g.status,'NeedsAttention');assert.equal((await h.api('/distributed/'+g.id+'/delete',{})).status,'Deleted');
+});

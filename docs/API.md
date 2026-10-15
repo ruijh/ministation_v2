@@ -113,3 +113,14 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 新增 `/api/distributed` 列表与创建、`/api/distributed/preview` 预检、`/api/distributed/:id/refresh` 同步、`/api/distributed/:id/delete` 清理。模型组按项目隔离，创建与清理仅管理员可操作；`POST /api/backends` 可通过 `distributed_id` 关联就绪组。具体参数、部分失败语义与边界见 [分布式推理说明](DISTRIBUTED.md)。
 
 分布式引擎目录：`GET /api/distributed/engines`。创建和预检请求接受 `engine: "sglang" | "vllm"`，省略时兼容默认 SGLang。vLLM 固定使用多节点 MP 执行器和全局 TP；预检返回引擎元数据及 `topology`。未知引擎返回 422，已有模型组不自动切换引擎。
+
+## PD 模式
+
+`GET /api/distributed/presets` 返回三个启发式场景预设；不表示硬件认证或性能最优。
+`POST /api/distributed/preview` 与创建接口新增 `mode: "pd"`（省略默认 `tp`），要求 `engine: "vllm"`。通用节点、镜像、模型卷和资源字段沿用；额外 `pd` 对象示例：
+
+```json
+{"preset":"balanced","prefill_nodes":1,"router_image":"registry.example/node@sha256:<64位十六进制摘要>","max_model_len":8192,"prefill_batch":4096,"decode_batch":2048,"max_num_seqs":32,"gpu_memory_utilization":0.85,"timeout_seconds":120}
+```
+
+`nodes` 前 `prefill_nodes` 个为 P，其余为 D，必须各至少一个。每节点 GPU 数是每实例 TP，所有节点互不重复。PD 的 `total` 包含路由器额外 0.5 CPU / 0.5 GiB，`topology` 返回 P/D 数与 connector；`members` 含 role。TP 模式禁止 `pd` 参数，PD 禁止 SGLang、未知字段或无 Decode 的组合。所有原有项目、角色、策略、UID 清理与发布保护继续生效。详细限制见 [PD 说明](PD.md)。
