@@ -23,17 +23,18 @@ test('guide preflight, deployment onboarding, probe/publish gates, project and r
  t.after(async()=>{await new Promise(r=>server.close(r));await new Promise(r=>upstream.close(r));await gateway.dispatcher.close();s.close();});
  let cookie='';async function api(path,body,status=200,project){const r=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method:body?'POST':'GET',headers:{cookie,'Content-Type':'application/json','X-Ministation-Client':'console',...(project?{'X-Project-Id':project}:{})},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];const v=await r.json();assert.equal(r.status,status,JSON.stringify(v));return v;}
  const me=await api('/auth/setup',{username:'guide-admin',password:'guide-test-password'},201);
- assert.equal((await api('/deployment-guide/templates')).length,2);
+ assert.equal((await api('/deployment-guide/templates')).length,2);assert.equal((await api('/deployment-guide/environment')).state,'unconfigured');
  let preview=await api('/deployment-guide/preview',input);assert.equal(preview.valid,false);assert.equal(preview.checks.find(c=>c.name==='GPU配额').ok,false);
  await api('/deployment-guide/preview',{...input,tensor_parallel:1},422);
  s.update('project',me.project_id,'system',{gpu_quota:4});kube.enabled=true;
  let bound=true,available=2,dryRuns=0,apiFailure=false;
  const node={metadata:{name:'gpu',labels:{}},spec:{},status:{allocatable:{cpu:'8',memory:'16Gi','nvidia.com/gpu':'2'},conditions:[{type:'Ready',status:'True'}]}};
  kube.nodes=async()=>({items:[{...node,status:{...node.status,allocatable:{...node.status.allocatable,'nvidia.com/gpu':String(available)}}}]});
- kube.request=async path=>{if(path.includes('persistentvolumeclaims')){if(apiFailure)throw Object.assign(new Error('denied'),{status:403});return {status:{phase:bound?'Bound':'Pending'}};}if(path.includes('resourcequotas'))return {items:[{spec:{hard:{'requests.cpu':'8','requests.memory':'16Gi'}}}]};return {items:[]};};
+ kube.request=async path=>{if(path.endsWith('/persistentvolumeclaims'))return {items:[{metadata:{name:'models'},status:{phase:bound?'Bound':'Pending'},spec:{accessModes:['ReadWriteMany']}}]};if(path.includes('persistentvolumeclaims')){if(apiFailure)throw Object.assign(new Error('denied'),{status:403});return {status:{phase:bound?'Bound':'Pending'}};}if(path.includes('resourcequotas'))return {items:[{spec:{hard:{'requests.cpu':'8','requests.memory':'16Gi'}}}]};return {items:[]};};
  kube.dryRun=async()=>{dryRuns++;};
+ const savedTemplate=s.put('template',me.project_id,'saved engine',{spec:buildEngineTemplate(input)});const env=await api('/deployment-guide/environment');assert.equal(env.templates.find(t=>t.id===savedTemplate.id).state,'candidate');assert.equal(env.state,'available');assert.equal(env.recommendation.resources.memory_gib,8);assert.equal(env.scope,'target_cluster');
  preview=await api('/deployment-guide/preview',input);assert.equal(preview.valid,true);assert.equal(dryRuns,2);assert.equal(s.list('deployment',me.project_id).length,0);
- bound=false;assert.equal((await api('/deployment-guide/preview',input)).checks.find(c=>c.name==='模型卷').ok,false);bound=true;
+ bound=false;assert.equal((await api('/deployment-guide/environment')).templates[0].state,'blocked');assert.equal((await api('/deployment-guide/preview',input)).checks.find(c=>c.name==='模型卷').ok,false);bound=true;
  available=0;assert.equal((await api('/deployment-guide/preview',input)).checks.find(c=>c.name==='节点剩余容量').ok,false);available=2;
  apiFailure=true;assert.equal((await api('/deployment-guide/preview',input)).valid,false);apiFailure=false;
  let d=await api('/deployments',preview.spec,201);let plan=await api('/deployments/'+d.id+'/onboarding');assert.equal(plan.ready,false);
@@ -47,9 +48,10 @@ test('guide preflight, deployment onboarding, probe/publish gates, project and r
  s.update('deployment',d.id,me.project_id,{conditions:{InfrastructureReady:false}});await api('/backends/'+backend.id+'/probe',{},409);
  s.update('deployment',d.id,me.project_id,{conditions:{InfrastructureReady:true}});await api('/backends/'+backend.id+'/probe',{});await api('/routes',publish,201);
  plan=await api('/deployments/'+d.id+'/onboarding');assert.equal(plan.existing.length,1);assert.equal(plan.routes.length,1);assert.equal(plan.existing[0].secret,undefined);
- const group=s.put('distributed',me.project_id,'group',{status:'Ready',spec:{served_model:'group-model'},endpoint:'http://group.default.svc:8000/v1'});
+ const group=s.put('distributed',me.project_id,'group',{status:'Ready',spec:{served_model:'group-model',nodes:['gpu-a','gpu-b'],gpus_per_node:1,cpu:1,memory_gib:1},endpoint:'http://group.default.svc:8000/v1'});
  const gp=await api('/distributed/'+group.id+'/onboarding');assert.equal(gp.ready,true);assert.equal(gp.suggestion.distributed_id,group.id);assert.equal(gp.suggestion.upstream_model,'group-model');
  const other=await api('/projects',{name:'other',namespace:'other',cpu_quota:4,memory_quota:8,gpu_quota:0},201);
+ const pool=await api('/pools',{name:'private pool',selector:{pool:'gpu'}},201);await api('/policy',{require_pool:true});assert.equal((await api('/deployment-guide/environment')).state,'pool_required');assert.equal((await api('/deployment-guide/environment')).recommendation,null);await api('/deployment-guide/environment?pool_id='+pool.id,null,404,other.id);
  await api('/deployments/'+d.id+'/onboarding',null,404,other.id);await api('/distributed/'+group.id+'/onboarding',null,404,other.id);
  await api('/users',{username:'guide-viewer',password:'viewer-test-password',role:'viewer',project_id:me.project_id},201);
  await api('/auth/login',{username:'guide-viewer',password:'viewer-test-password'});await api('/deployment-guide/preview',input,403);await api('/backends',plan.suggestion,403);

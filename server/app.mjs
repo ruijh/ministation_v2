@@ -1,3 +1,4 @@
+import {installEnvironment} from './environment.mjs';
 import {installDeploymentGuide} from './deployment-guide.mjs';
 import {schemaVersion} from './migrations.mjs';
 import {RequestQueue,installQueue} from './queue.mjs';
@@ -85,6 +86,7 @@ export function createApp(overrides={}){
  app.post('/v1/decisions',(req,res)=>handleDecision(gateway,req,res));
  app.post(['/v1/chat/completions','/v1/embeddings'],(req,res)=>gateway.handle(req,res));
  const distributed=installDistributed(app,{s,kube,governance,checkDeployment,get,write,audit,traffic});
+ installEnvironment(app,{s,kube,governance});
  installDeploymentGuide(app,{s,kube,governance,checkDeployment,get,write,config});
  installGovernance(app,{s,kube,governance,write,audit});
  installTraffic(app,{s,get,write,audit,traffic});

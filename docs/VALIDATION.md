@@ -111,3 +111,11 @@ README 待办可行性检查另见 [本地开发候选](LOCAL-DEVELOPMENT.md)，
 - `npm run test:e2e`：完整浏览器流程通过。覆盖向导填表、预检错误、修改输入使结果失效、保存草稿、验证前禁止发布、诊断建议和 390px 移动布局。浏览器接入及诊断阶段采用明确的合成就绪状态；实际协议与权限门禁由 API 集成测试验证。
 - 真实 Kubernetes 对 vLLM 与 SGLang 基础模板共 4 个 Deployment/Service 资源的服务端 dry-run 通过；没有创建占位模型容器。集群 GPU 数为 0，未执行 GPU 模型推理。
 - 截图位于本地 `artifacts/e2e/deployment-wizard.png`、`deployment-wizard-mobile.png`、`deployment-onboarding.png`、`deployment-diagnostics.png`，不纳入源码交付。
+
+## 2026-10-16：轻量工作台与环境感知
+
+- 前端生产构建与 42 项自动化测试通过。新增覆盖环境未接入/不可观测/无 GPU、项目配额与策略限制、节点污点和禁止调度、单节点资源碎片、资源池隔离及已保存模板适配状态。
+- 浏览器完整流程覆盖六个主导航、上下文导航和高级功能展开；环境推荐自动填充、手工覆盖、折叠资源、服务详情诊断、结构化修订入口和移动布局。GPU 推荐使用明确的合成容量测试数据，不代表真实推理验收。
+- 真实本地集群只读检测：HTTP 200、scope=target_cluster、3 节点、GPU 数为 0、state=no_gpu、未生成 GPU 资源推荐；当前命名空间模型卷列表读取成功。测试使用独立数据库，没有改动运行数据或创建集群工作负载。
+- 前端构建约 344 KB JavaScript / 17 KB CSS（未压缩），无新增运行时依赖。没有测量控制面运行内存或认证模型显存需求。
+- 截图包含 `artifacts/e2e/overview.png`、`environment-recommendation.png`、`deployment-wizard-mobile.png`；资源推荐、原始详情及专家操作按需展开。

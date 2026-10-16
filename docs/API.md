@@ -150,3 +150,11 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 向导请求字段：`name,engine,image,model_pvc,model_path,served_model,cpu,memory_gib,gpus,tensor_parallel`，可选 `shared_memory_gib`（默认 1）、`pool_id,model_id`。GPU/TP 必须相等且为正整数；路径位于 `/models/` 下；共享内存上限小于容器内存。响应中的 spec 可提交原有 `POST /api/deployments` 保存草稿；普通部署配置新增可选 `shared_memory_gib`，表示内存型 emptyDir 的 GiB 上限。
 
 onboarding 为只读建议，不修改允许主机列表、不返回凭据、不跳过现有接入/探测/发布门禁。写入继续使用 `/api/backends`、`/api/backends/:id/probe` 和 `/api/routes`。完整流程与限制见 [部署与调用指南](DEPLOYMENT-GUIDE.md)。
+
+## 目标环境与资源推荐
+
+`GET /api/deployment-guide/environment?pool_id=<可选资源池>` 需要当前项目会话；资源池必须属于项目且在策略允许范围内。省略时使用策略默认池。要求资源池但未选择时返回 `pool_required`。
+
+返回 `scope: target_cluster`、采集时间、节点硬件标签与容量、项目剩余配额、当前命名空间 PVC、已保存模板的适配提示，以及可选 `recommendation`。状态包含 `available / unconfigured / unknown / no_gpu / quota_blocked / capacity_blocked / pool_required`；信息不足时不生成推荐。模板状态为 `candidate / blocked / unknown`，candidate 只表示基础资源检查通过，不能代替部署与模型验证。
+
+推荐不创建资源、不保留容量、不修改配额。节点标签缺失的架构/GPU 型号/显存返回 null。适用范围和资源算法见 [环境感知说明](DEPLOYMENT-GUIDE.md)。
