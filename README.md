@@ -32,10 +32,13 @@
 
 ```bash
 npm ci
-npm run build            # 构建前端静态资源到 dist/
-bash scripts/start.sh    # 启动控制面，监听 127.0.0.1:8787（Ctrl+C 停止）
-bash scripts/stop.sh     # 配套停止
+npm run build                  # 构建前端静态资源到 dist/
+bash scripts/setup-vllm.sh     # 【按需/推荐】安装 vLLM 引擎到 .venv-vllm（首次本机 GPU 部署前执行）
+bash scripts/start.sh          # 启动控制面，监听 127.0.0.1:8787（Ctrl+C 停止）
+bash scripts/stop.sh           # 配套停止
 ```
+
+> **引擎与驱动就绪说明**：`scripts/setup-vllm.sh` 只在「本机部署需要跑 vLLM 引擎（HF / MoE 大模型，如 DeepSeek-V4、Qwen3 系）」时才必须——它把约 4GB 的 vLLM 装进 `.venv-vllm`（自动换用清华 / 阿里 / 腾讯镜像，建议直接在宿主机执行）。若只用 llama.cpp（GGUF）、CPU 或自定义引擎可跳过；`start.sh` 检测到 `.venv-vllm` 会自动启用 vLLM。GPU 宿主机首次部署前需先装驱动：`sudo bash scripts/setup-gpu-driver.sh`（root、一次性；当前机器已就绪）。
 
 启动后访问 <http://127.0.0.1:8787>。`scripts/start.sh` 会顺带完成：识别 CUDA 工具链并补 `PATH` / `LD_LIBRARY_PATH`、查找 ninja、让 vLLM 使用 `.venv-vllm`、自动探测当前可见 GPU 并导出 `CUDA_VISIBLE_DEVICES`（可见即用，可用 `MINISTATION_CUDA_DEVICES=0,1` 覆盖）、设置模型扫描根目录 `MINISTATION_MODEL_SCAN_ROOTS`（默认 `/home` 与项目内 `artifacts/models`，均可覆盖）。
 
