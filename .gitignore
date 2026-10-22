@@ -1,11 +1,14 @@
 node_modules/
 .npm-cache/
+.venv*/
+.cache/
 dist/
 data/
 .env
 test-results/
 playwright-report/
 artifacts/
+archive/
 examples/cpu-model/*.tar
 examples/cpu-model/images.txt
 *.log

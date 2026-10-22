@@ -73,14 +73,6 @@ export function summarizeRequests(rows){
  return {requests:rows.length,completed:complete.length,in_flight:rows.length-complete.length,failed:failed.length,unknown:unknown.length,error_rate:denominator?failed.length/denominator:null,p95_ms:percentile(complete.map(r=>r.latency_ms),.95),ttft_p95_ms:percentile(complete.map(r=>r.ttft_ms),.95),ttft_samples:complete.filter(r=>r.ttft_ms!=null).length};
 }
 export function installOperations(app,{s,kube,get,write,audit,observer}){
- app.get('/api/templates',(req,res)=>res.json(s.list('template',req.project)));
- app.post('/api/templates',(req,res)=>{
-  write(req);const v=z.object({name:z.string().trim().min(1).max(100),description:z.string().max(1000).default(''),deployment_id:z.string()}).parse(req.body);
-  const source=get('deployment',req,v.deployment_id);
-  if(!source.conditions.InfrastructureReady)fail(409,'TEMPLATE_NOT_READY','请从容器已就绪的部署保存模板');
-  const spec=deploymentSchema.parse(source.spec);if(!/@sha256:[a-f0-9]{64}$/.test(spec.image))fail(422,'IMAGE_DIGEST_REQUIRED','模板需要固定镜像摘要');
-  const template=s.put('template',req.project,v.name,{description:v.description,spec,template_revision:1,source_deployment:source.id,source_revision:source.revision,verified_at:now()});audit(req,'template.create',template.id);res.status(201).json(template);
- });
  app.get('/api/deployments/:id/health',(req,res)=>{const d=get('deployment',req);res.json({observation:s.get('observation','observation:'+d.id,req.project),events:s.db.prepare('SELECT * FROM deployment_events WHERE project_id=? AND deployment_id=? ORDER BY created_at DESC,rowid DESC LIMIT 200').all(req.project,d.id),conditions:d.conditions,published:s.list('backend',req.project).filter(b=>b.deployment_id===d.id).map(b=>({name:b.name,status:b.status}))});});
  app.get('/api/metrics',(req,res)=>{
   const hours=z.coerce.number().int().min(1).max(168).default(24).parse(req.query.hours),endTime=Date.now(),since=new Date(endTime-hours*3600000).toISOString();

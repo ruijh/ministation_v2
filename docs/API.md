@@ -10,7 +10,7 @@
 | /auth/logout, /auth/password | POST | 注销、改密 |
 | /me, /projects, /users, /settings | GET | 账号、项目、用户与配置 |
 | /projects, /users | POST | 管理员创建项目/用户 |
-| /models | GET / POST | 模型版本与本地快照 |
+| /models, /models/:id | GET / POST / DELETE | 模型版本与本地快照、删除（引用保护 409 MODEL_IN_USE） |
 | /deployments/validate, /deployments | POST | 预检、创建草稿（支持 Idempotency-Key） |
 | /deployments/:id/launch | POST | 返回 202 与后台任务，轮询 /operations/:id |
 | /deployments/:id/manifest | GET | 生成 Kubernetes 清单 |
@@ -53,7 +53,11 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 | MINISTATION_DATA_DIR | 默认 data，数据库、主密钥、模型快照 |
 | MINISTATION_BOOTSTRAP_TOKEN | 非回环监听必须配置，首次初始化需要输入 |
 | MINISTATION_SECURE_COOKIES | HTTPS 反向代理部署设为 true |
-| MINISTATION_UPSTREAM_HOSTS | 逗号分隔精确主机白名单；不允许带凭据 URL 或重定向 |
+| MINISTATION_UPSTREAM_HOSTS | 逗号分隔精确主机白名单；默认已含 127.0.0.1 与 localhost，便于本机引擎接入；不允许带凭据 URL 或重定向 |
+| MINISTATION_LOCAL_LLAMACPP_BIN | 本机部署 llama.cpp 引擎可执行文件（默认 llama-server；scripts/start.sh 设为 artifacts/llama.cpp/build-cuda/bin/llama-server） |
+| MINISTATION_LOCAL_VLLM_BIN | 本机部署 vLLM 引擎入口命令（默认 python3 -m vllm.entrypoints.openai.api_server；scripts/start.sh 使用 .venv-vllm/bin/python） |
+| MINISTATION_CUDA_DEVICES | 可选；scripts/start.sh 导出 CUDA_VISIBLE_DEVICES 时的覆盖（如 0 或 0,1），自动与 nvidia-smi 可见卡求交集 |
+| MINISTATION_MODEL_SCAN_ROOTS | 逗号分隔的模型扫描根目录；服务端缺省为空（即不扫描），scripts/start.sh 默认 /home 与项目内 artifacts/models |
 | MINISTATION_MODEL_ROOT | 管理员可导入模型的本地根目录 |
 | MINISTATION_KUBE_URL | HTTPS Kubernetes API |
 | MINISTATION_KUBE_TOKEN_FILE / MINISTATION_KUBE_CA_FILE | Token 与 CA 文件路径，Token 每次请求重新读取 |
@@ -65,6 +69,46 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 `GET /api/backends/:id` 返回项目内服务详情，隐藏凭据，仅提供 has_credential 标记。
 
 `POST /api/backends/:id/update` 仅管理员可用，提交完整可编辑配置及 version；过期版本返回 409。api_key 留空保留，非空加密替换。地址、模型、协议、超时或凭据变化使服务进入 Unverified，重新测试成功前网关拒绝新调用；名称、默认逻辑模型名和费率修改保留连接状态。已发布路由名称不随默认逻辑模型名修改。关联部署不在此接口调整。所有变更写入审计，历史请求费用不重算。
+
+## 本机部署接口（/api/local）
+
+无需 Kubernetes，直接在宿主机启动并管理 llama.cpp / vLLM / 自定义引擎进程。
+
+| 路径 | 方法 | 行为 |
+| --- | --- | --- |
+| /api/local | GET / POST | 本机部署列表 / 创建（engine=llamacpp\|vllm\|custom） |
+| /api/local/host | GET | 宿主机能力：CPU 核数、内存、GPU（count/model/memory_mib=MiB）、磁盘 free |
+| /api/local/recommend | GET | `model,engine,gpus` → 建议 threads / max_model_len / gpus / parallel 与理由 |
+| /api/local/engines | GET | llama.cpp / vLLM 就绪探测（路径、版本） |
+| /api/local/models | GET | 扫描根目录下的 HF 模型目录 / GGUF 文件 |
+| /api/local/:id | GET | 单条详情：status / healthy / reason / pid / port / log 尾部 |
+| /api/local/:id/start, /stop, /restart | POST | 启动 / 停止 / 重启宿主引擎 |
+| /api/local/:id/onboarding | GET | 接入建议（Base URL、逻辑模型名） |
+| /api/local/:id/diagnostics | GET | 下载诊断包 ZIP：engine.log + deployment.json + host-env.txt + model-info.json |
+| /api/local/:id | DELETE | 删除本机部署记录（不删除本机文件） |
+
+创建/启动校验：端口占用 `422 PORT_IN_USE`；引擎与模型类型不匹配 `422`；vLLM 且 `gpus` 超过本机可见 GPU 数 `422 GPU_COUNT_EXCEEDED`（启动前置校验同样拦截）；模型体积超过本机显存容量时前端在提交前拦截。进程退出时后端自动从日志摘取真实错误写入 `reason`（如“进程退出 代码 1：CUDA OOM / World size (2) 大于可用 GPU (1)”）；`/api/local/:id` 的 log 字段返回尾部日志供界面控制台轮询。
+
+## 模型资产 / 模型版本（/api/materials 与 /api/models）
+
+模型资产用于组织本机扫描 / 魔搭下载的模型，与“已导入模型版本”（kind=model 元数据记录；删除只移除记录，不影响本机文件）。
+
+| 路径 | 方法 | 行为 |
+| --- | --- | --- |
+| /api/materials/roots | GET / POST / DELETE | 模型扫描目录增删 |
+| /api/materials/models | GET | 扫描结果：HF 目录 / GGUF 及大小、适配判定 |
+| /api/materials/model-note | PUT | 修改扫描模型描述 |
+| /api/materials/import | POST | 把扫描路径导入为模型版本（本地快照） |
+| /api/materials/modelscope/catalog | GET | ModelScope 清单（按本机资源过滤适配） |
+| /api/materials/modelscope/inspect | GET | 按模型 ID 查询元数据 |
+| /api/materials/modelscope/settings | GET / POST | 下载目录配置 |
+| /api/materials/modelscope/download | POST | SSE 流式下载（event=stage/line/done/error） |
+| /api/models | GET / POST | 模型版本列表 / 创建（source=local 需 MINISTATION_MODEL_ROOT） |
+| /api/models/:id | GET / DELETE | 单版本详情 / 删除；被部署（spec.model_id）引用时 `409 MODEL_IN_USE` |
+
+## 环境初始化（/api/env-*）
+
+`GET /api/env-plan` 返回环境初始化计划（下载 / 安装 / 部署 / 配置 / 验证，含系统依赖、`.venv-vllm`、flashinfer JIT 工作目录与自检）；`POST /api/env-run` 以 SSE 逐行推流执行（event=stage/line/done/error），直接驱动「平台设置 → 环境初始化」页面的动态 Console。
 
 
 ## 部署模板、健康观测与服务指标

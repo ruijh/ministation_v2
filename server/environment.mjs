@@ -1,5 +1,6 @@
 import {distributedUsage} from './distributed.mjs';
 import {fail} from './domain.mjs';
+import {localEnvironment} from './local.mjs';
 
 // A conservative starting point constrained by one real node and project limits.
 // GPU memory/model compatibility is deliberately not inferred from GPU count.
@@ -20,8 +21,9 @@ export function recommendEnvironment(capacity,policy,remaining,selector={}){
  return {state,reason,nodes:visible,remaining_quota:remaining,recommendation,limitations:['未验证模型权重、KV Cache 显存、引擎镜像或驱动兼容性；资源起点不代表模型能装入显存。','容量为请求量快照，不是实时空闲显存，也不预留资源。部署前仍需预检。'],pd:{recommended:false,reason:'PD 需要模型显存、节点网络和负载测量，不能仅凭 GPU 数量推荐。'}};
 }
 
-export function installEnvironment(app,{s,kube,governance}){
+export function installEnvironment(app,{s,kube,governance,local}){
  app.get('/api/deployment-guide/environment',async(req,res)=>{
+  if(req.query.target==='local')return res.json(await localEnvironment(local));
   const policy=governance.policy(req.project),poolId=req.query.pool_id||policy.defaults.pool_id;
   if(poolId&&typeof poolId!=='string')fail(422,'INVALID_POOL','资源池无效');
   const pool=poolId?s.get('pool',poolId,req.project):null;

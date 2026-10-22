@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import {backendSchema,assertURL,fail,publicObject} from './domain.mjs';
 
-export function installBackendEdit(app,s,config,{get,write,audit}){
+export function installBackendEdit(app,s,config,{get,write,audit,local}={}){
  app.get('/api/backends/:id',(req,res)=>res.json(publicObject(get('backend',req))));
  app.post('/api/backends/:id/update',(req,res)=>{
   write(req,true);const old=get('backend',req);
@@ -9,6 +9,8 @@ export function installBackendEdit(app,s,config,{get,write,audit}){
   data.base_url=assertURL(data.base_url,config.upstreamHosts);
   if(data.deployment_id!==undefined&&data.deployment_id!==old.deployment_id)fail(422,'DEPLOYMENT_IMMUTABLE','关联部署不可在此修改');
   if(data.distributed_id!==undefined&&data.distributed_id!==old.distributed_id)fail(422,'DEPLOYMENT_IMMUTABLE','关联模型组不可在此修改');
+  // 关联本机部署时，上游模型名强制使用该部署的 served_model（vLLM 别名 / llama.cpp alias），避免 404
+  if(old.local_id&&local){const l=local.get(req.project,old.local_id);if(l&&l.spec.engine!=='custom')data.upstream_model=l.spec.served_model;}
   const changed=['base_url','upstream_model','protocol','timeout_seconds'].filter(k=>data[k]!==old[k]);
   const rotate=typeof api_key==='string'&&api_key.length>0;
   const invalidate=changed.length>0||rotate;

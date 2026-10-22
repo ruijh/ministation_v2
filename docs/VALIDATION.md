@@ -119,3 +119,13 @@ README 待办可行性检查另见 [本地开发候选](LOCAL-DEVELOPMENT.md)，
 - 真实本地集群只读检测：HTTP 200、scope=target_cluster、3 节点、GPU 数为 0、state=no_gpu、未生成 GPU 资源推荐；当前命名空间模型卷列表读取成功。测试使用独立数据库，没有改动运行数据或创建集群工作负载。
 - 前端构建约 344 KB JavaScript / 17 KB CSS（未压缩），无新增运行时依赖。没有测量控制面运行内存或认证模型显存需求。
 - 截图包含 `artifacts/e2e/overview.png`、`environment-recommendation.png`、`deployment-wizard-mobile.png`；资源推荐、原始详情及专家操作按需展开。
+
+## 2026-10-22：本机部署 v2 / 模型资产 / GPU 可见性诊断
+
+- 本机部署向导重构：已导入版本选择（下拉只列已导入模型版本）、对外模型名为主要改动项、GPU 数量缺省本机能力检测值；提交前做 GPU 数（≤ 本机可见卡数）、模型体积（≤ 本机显存容量）与引擎-模型类型（GGUF↔llama.cpp、HF↔vLLM）校验；引擎下拉被手动选择后不再被选模型自动覆盖。
+- 部署行内“启动 / 运行控制台”实时轮询引擎日志与健康度；进程退出时后端自动从日志摘取真实错误写入状态（如“进程退出 代码 1：CUDA OOM / World size (2) 大于可用 GPU (1)”），不再只显示“代码 1”。
+- 失败可点“分析”下载 `ministation-diagnose-<id8>.zip` 诊断包（引擎日志 + 部署参数 + 宿主机环境 + 模型信息），已用真实失败部署验证。
+- 模型资产：本机扫描 → 导入资产 → 已导入模型版本；新增版本删除（被部署 `spec.model_id` 引用时 409 `MODEL_IN_USE` 拒绝并提示先解除关联）。
+- GPU 探活：宿主物理 2× NVIDIA L20（`/proc/driver/nvidia/gpus` 两卡、Device Minor 0/1、驱动 580.82.09 Open Kernel Module），但控制面 `nvidia-smi` 仅枚举 1 卡；`scripts/start.sh` 已加 `CUDA_VISIBLE_DEVICES` 自动识别（可见即用，可用 `MINISTATION_CUDA_DEVICES` 覆盖，与可见卡求交集）。差异定位为 nvidia-smi/NVML 或进程环境层，需在宿主 shell 用 `nvidia-smi -L` 与 `$CUDA_VISIBLE_DEVICES` 复核。
+- 真实失败验证：Qwen3-30B-A3B（~61 GiB bf16）在单 L20（44.4 GiB）加载权重时 CUDA OOM → EngineCore failed；状态摘取到真实 OOM 行。规约：该模型需 2×L20（TP=2）或改用 GGUF 量化版 / ≤ ~38 GiB 的 bf16 模型 / CPU。
+- `npm test`：67 项通过；`npm run build`：通过（前端 ~401 KB JS）。文档（README / API / DEPLOYMENT-GUIDE / COVERAGE / LOCAL-DEVELOPMENT）已同步最新代码库。

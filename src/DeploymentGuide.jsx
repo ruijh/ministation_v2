@@ -30,9 +30,10 @@ export function DeploymentWizard({api,onSave,onAdvanced}){
 }
 
 export function ServiceOnboarding({api,kind,id,onDone}){
+ const collection=kind==='deployment'?'deployments':kind==='distributed'?'distributed':'local';
  const [data,setData]=useState(null),[selected,setSelected]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[published,setPublished]=useState(null);
- async function load(preferred){const d=await api('/'+(kind==='deployment'?'deployments':'distributed')+'/'+id+'/onboarding');setData(d);setSelected(current=>preferred||current||d.existing[0]?.id||'');return d;}
- useEffect(()=>{let active=true;api('/'+(kind==='deployment'?'deployments':'distributed')+'/'+id+'/onboarding').then(d=>{if(active){setData(d);setSelected(d.existing[0]?.id||'');}}).catch(e=>{if(active)setError(errorText(e));});return()=>{active=false;};},[api,kind,id]);
+ async function load(preferred){const d=await api('/'+collection+'/'+id+'/onboarding');setData(d);setSelected(current=>preferred||current||d.existing[0]?.id||'');return d;}
+ useEffect(()=>{let active=true;api('/'+collection+'/'+id+'/onboarding').then(d=>{if(active){setData(d);setSelected(d.existing[0]?.id||'');}}).catch(e=>{if(active)setError(errorText(e));});return()=>{active=false;};},[api,collection,id]);
  async function run(fn){setBusy(true);setError('');try{await fn();}catch(e){setError(errorText(e));}finally{setBusy(false);}}
  const backend=data?.existing.find(b=>b.id===selected),route=data?.routes.find(r=>r.target_id===selected&&r.enabled);
  return <div className="deployment-guide"><p className="hint">接入 → 实际连接测试 → 发布。关联关系和服务地址自动填写，连接测试会向模型发送一次请求。</p><ErrorMessage error={error}/>{!data?<p role="status">正在读取部署信息…</p>:<>
