@@ -33,12 +33,12 @@
 ```bash
 npm ci
 npm run build                  # 构建前端静态资源到 dist/
-bash scripts/setup-vllm.sh     # 【按需/推荐】安装 vLLM 引擎到 .venv-vllm（首次本机 GPU 部署前执行）
+bash scripts/setup-vllm.sh     # 默认路径：vLLM 装进 .venv-vllm（HF/MoE 本机 GPU 部署前必做；仅 GGUF/CPU 可跳过）
 bash scripts/start.sh          # 启动控制面，监听 127.0.0.1:8787（Ctrl+C 停止）
 bash scripts/stop.sh           # 配套停止
 ```
 
-> **引擎与驱动就绪说明**：`scripts/setup-vllm.sh` 只在「本机部署需要跑 vLLM 引擎（HF / MoE 大模型，如 DeepSeek-V4、Qwen3 系）」时才必须——它把约 4GB 的 vLLM 装进 `.venv-vllm`（自动换用清华 / 阿里 / 腾讯镜像，建议直接在宿主机执行）。若只用 llama.cpp（GGUF）、CPU 或自定义引擎可跳过；`start.sh` 检测到 `.venv-vllm` 会自动启用 vLLM。GPU 宿主机首次部署前需先装驱动：`sudo bash scripts/setup-gpu-driver.sh`（root、一次性；当前机器已就绪）。
+> **默认推荐路径**：本机 GPU 部署 vLLM（HF / MoE 大模型，如 DeepSeek-V4、Qwen3 系）前，先执行 `scripts/setup-vllm.sh`——它把约 4GB 的 vLLM 装入 `.venv-vllm`（自动换用清华 / 阿里 / 腾讯镜像，建议直接在宿主机执行）；装好后 `start.sh` 检测到 `.venv-vllm` 自动启用 vLLM，本机部署向导会实时显示“vLLM ✓ 就绪”。若只跑 **GGUF（llama.cpp）/ CPU / 自定义引擎** 可跳过本步（向导会显示“vLLM ✗ 未安装”，不影响其它引擎）。GPU 宿主机首次部署前还需先装驱动：`sudo bash scripts/setup-gpu-driver.sh`（root、一次性；当前机器已就绪）。
 
 启动后访问 <http://127.0.0.1:8787>。`scripts/start.sh` 会顺带完成：识别 CUDA 工具链并补 `PATH` / `LD_LIBRARY_PATH`、查找 ninja、让 vLLM 使用 `.venv-vllm`、自动探测当前可见 GPU 并导出 `CUDA_VISIBLE_DEVICES`（可见即用，可用 `MINISTATION_CUDA_DEVICES=0,1` 覆盖）、设置模型扫描根目录 `MINISTATION_MODEL_SCAN_ROOTS`（默认 `/home` 与项目内 `artifacts/models`，均可覆盖）。
 
@@ -62,7 +62,7 @@ bash scripts/stop.sh           # 配套停止
 
 MiniStation 可直接在控制面宿主机上启动并管理一个 OpenAI 兼容推理引擎进程（llama.cpp / vLLM / 自定义命令），支持 CPU 与 GPU（GPU 需本机驱动）。入口在“服务部署 → 本机部署 → 新建部署”。
 
-1. **选择已导入版本**：模型选择下拉只列出「模型资产 → 已导入模型版本」（先在“本机模型扫描”里点“导入资产”，或手动导入版本）；未导入的扫描模型不会出现在下拉中。选中版本会自动带出“对外模型名”（模型 basename，这是需要修改的主要字段），并可按类型推荐引擎（GGUF→llama.cpp、HF→vLLM）。
+1. **选择已导入版本**：模型选择下拉只列出「模型资产 → 已导入模型版本」（先在“本机模型扫描”里点“导入资产”，或手动导入版本）；未导入的扫描模型不会出现在下拉中。选中版本会自动带出“对外模型名”（模型 basename，这是需要修改的主要字段），并按类型给出**默认引擎路径**：HF / MoE 模型默认走 **vLLM**（未装时向导提示“vLLM ✗ 未安装”，回开头跑 `setup-vllm.sh`），GGUF 走 **llama.cpp**。
 2. 填写对外模型名、监听端口。“GPU 数量”缺省为本机能力检测到的卡数；引擎下拉被手动改过后，选模型不再自动覆盖你的选择。
 3. 端口占用、模型不存在、GPU 数量超过本机可见卡数、模型体积超过本机显存容量，都会在提交前或启动时给出明确错误；引擎与模型类型不匹配（如 GGUF 配 vLLM）也会被拦截并提示。
 4. 可点“应用推荐参数”按模型体积与本机内存 / GPU 自动填充线程、上下文与 TP，并显示推荐理由。
