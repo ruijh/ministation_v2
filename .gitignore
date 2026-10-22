@@ -39,3 +39,4 @@ examples/jev-cpu/__pycache__/
 *.key
 *.pem
 *.token
+token.txt
