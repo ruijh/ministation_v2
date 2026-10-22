@@ -89,6 +89,8 @@ MiniStation 可直接在控制面宿主机上启动并管理一个 OpenAI 兼容
 
 检查命令（宿主机 shell）：`nvidia-smi -L` 应列出物理 GPU；实际可用数以控制面“本机能力”显示为准。
 
+**故障排查**：若控制面“本机能力”检测到的卡数少于物理卡数（`/proc/driver/nvidia/gpus` 有登记），多半是某张卡 `RmInitAdapter failed`（常见于此卡的 GSP 固件 boot 超时）。在宿主机执行 `sudo bash scripts/gpu-diag.sh` 采集 GPU / NVRM / 驱动 / PCIe 信息并生成日志；默认只读，加 `fix` 进入带确认的修复步骤（模块重载 / `scripts/setup-gpu-driver.sh` 驱动重装 / 链路检查），处置顺序同脚本第 ④ 步结论：重启整机 → 重装驱动重启 → GSP 绕行（`NVreg_EnableGpuFirmware=0`）→ 硬件层。
+
 ## 轻量工作台
 
 主导航为运行总览、模型资产、服务部署、在线调试、监控告警和平台设置。相关页面在各入口内切换，分布式、灰度、策略和原生资源等高级功能按需展开。
