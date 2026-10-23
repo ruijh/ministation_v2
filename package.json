@@ -10,11 +10,12 @@
     "dev": "concurrently -k -n api,ui \"node --watch server/index.mjs\" \"vite --host 127.0.0.1\"",
     "start": "node server/index.mjs",
     "build": "vite build",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "check": "node --check server/app.mjs && node --check server/gateway.mjs && npm run build && npm test",
+    "test": "node --test --test-concurrency=1 --test-timeout=60000 tests/*.test.mjs",
+    "check": "npm run check:syntax && npm run build && npm test",
     "fixture": "node scripts/fixture.mjs",
     "test:e2e": "playwright test",
-    "backup": "node scripts/backup.mjs"
+    "backup": "node scripts/backup.mjs",
+    "check:syntax": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
     "express": "5.3.0",

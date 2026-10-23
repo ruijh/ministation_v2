@@ -49,6 +49,10 @@ test('本机扫描：根目录管理 + 扫描 + 描述批注 + 导入',async t=>
  scan=await api('/api/materials/models');assert.equal(scan.models.find(m=>m.path===model).description,'这是测试模型');
  // 导入为模型资产
  const imp=await api('/api/materials/import',{path:model},201);assert.equal(imp.model_name,model);
+ assert.equal(imp.name,'fake-model');
+ const again=await api('/api/materials/import',{path:model},201);
+ assert.equal(again.name,'fake-model-1');
+ assert.equal((await api('/api/materials/import',{path:model},201)).name,'fake-model-2');
  const list=await api('/api/models');assert.ok(list.some(m=>m.id===imp.id));
  // 本机部署模型列表也应包含该目录下的模型（DB 根目录参与扫描）
  const local=await api('/api/local/models');assert.ok(local.models.some(m=>m.path===model));
@@ -60,6 +64,7 @@ test('ModelScope 下载设置：缺省目录与自定义目录',async t=>{
  const {api}=await harness(t);
  const s=await api('/api/materials/modelscope/settings');
  assert.equal(s.dir,DEFAULT_DL_DIR);assert.ok(s.dir.endsWith('Models'));
- await api('/api/materials/modelscope/settings',{dir:'/tmp/ms-dl-test'},200);
- assert.equal((await api('/api/materials/modelscope/settings')).dir,'/tmp/ms-dl-test');
+ const dir=mkdtempSync(join(resolve('artifacts/tests'),'ms-dl-'));
+ await api('/api/materials/modelscope/settings',{dir},200);
+ assert.equal((await api('/api/materials/modelscope/settings')).dir,dir);
 });

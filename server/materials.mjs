@@ -1,6 +1,6 @@
 import {existsSync,mkdirSync,statSync} from 'node:fs';
-import {spawn,spawnSync} from 'node:child_process';
-import {join,resolve,dirname} from 'node:path';
+import {runProcess} from './process-runner.mjs';
+import {join,resolve,dirname,isAbsolute,basename} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {z} from 'zod';
 import {fail,publicObject} from './domain.mjs';
@@ -14,7 +14,7 @@ import {detectHost} from './local.mjs';
 const GIB=2**30;
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const MS_BASE='https://modelscope.cn/api/v1/models/';
-const MS_ID=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.:-]+$/;
+const MS_ID=/^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 export const DEFAULT_DL_DIR=join(ROOT,'Models');
 export const MATERIALS_ROUTES=1;
 const MS_VENV=join(ROOT,'.venv-ms');
@@ -59,9 +59,9 @@ export function normalizeMsDetail(d){
 const cache=new Map();
 async function msFetch(id,timeoutMs=9000){
  if(cache.get(id)?.t>Date.now()-600000)return cache.get(id).v;
- const c=await Promise.race([
-  fetch(MS_BASE+id,{headers:{'User-Agent':'MiniStation/0.1','Accept':'application/json'}}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}),
-  new Promise((_,rej)=>setTimeout(()=>rej(new Error('请求超时')),timeoutMs))]);
+ const response=await fetch(MS_BASE+id,{signal:AbortSignal.timeout(timeoutMs),headers:{'User-Agent':'MiniStation/0.1','Accept':'application/json'}});
+ if(!response.ok){await response.body?.cancel();throw new Error('HTTP '+response.status);}
+ const c=await response.json();
  cache.set(id,{t:Date.now(),v:c});
  return c;
 }
@@ -71,10 +71,11 @@ async function msDetail(id){
  return normalizeMsDetail(j.Data);
 }
 
-function defaultDir(s,project){const rec=(Array.isArray(s.list('setting',project))?s.list('setting',project):[]).find(x=>x.name==='modelscope-dl');return rec?.dir&&rec.dir.startsWith('/')?rec.dir:DEFAULT_DL_DIR;}
+function defaultDir(s,project){const rec=(Array.isArray(s.list('setting',project))?s.list('setting',project):[]).find(x=>x.name==='modelscope-dl');return rec?.dir&&isAbsolute(rec.dir)?rec.dir:DEFAULT_DL_DIR;}
 
 // ---- 安装路由 ----
-export function installMaterials(app,{s,get,write,audit}){
+export function installMaterials(app,{s,get,write,audit,run=runProcess,hasTool=()=>existsSync(MS_BIN)}){
+ let running=false;
  // 本机扫描根目录管理
  app.get('/api/materials/roots',(req,res)=>{
   const env=Array.from(new Set((process.env.MINISTATION_MODEL_SCAN_ROOTS||'').split(',').map(x=>x.trim()).filter(Boolean)));
@@ -83,7 +84,7 @@ export function installMaterials(app,{s,get,write,audit}){
   const roots=[...env.map(p=>({p,source:'env'})),...manual.map(r=>({p:r.path,id:r.id,source:'manual'}))].filter(x=>seen.has(x.p)?false:(seen.add(x.p),true));
   res.json(roots.map(r=>{let exists=false,is_dir=false;try{const st=statSync(r.p);exists=true;is_dir=st.isDirectory();}catch{}return {id:r.id||null,path:r.p,source:r.source,exists,is_dir};}));
  });
- app.post('/api/materials/roots',(req,res)=>{write(req);const {path}=z.object({path:z.string().min(1).max(2000)}).parse(req.body);if(!path.startsWith('/'))fail(422,'PATH_ABSOLUTE','目录必须是绝对路径');let st;try{st=statSync(path);}catch{fail(422,'PATH_NOT_FOUND','目录不存在或无法访问');}if(!st.isDirectory())fail(422,'NOT_DIRECTORY','请填写模型目录（其下可含一至多个模型的子目录，或直接就是模型目录）');const v=s.put('modelroot',req.project,path,{path});audit(req,'modelroot.add',path);res.status(201).json(publicObject(v));});
+ app.post('/api/materials/roots',(req,res)=>{write(req);const {path}=z.object({path:z.string().min(1).max(2000)}).parse(req.body);if(!isAbsolute(path))fail(422,'PATH_ABSOLUTE','目录必须是绝对路径');let st;try{st=statSync(path);}catch{fail(422,'PATH_NOT_FOUND','目录不存在或无法访问');}if(!st.isDirectory())fail(422,'NOT_DIRECTORY','请填写模型目录（其下可含一至多个模型的子目录，或直接就是模型目录）');const v=s.put('modelroot',req.project,path,{path});audit(req,'modelroot.add',path);res.status(201).json(publicObject(v));});
  app.delete('/api/materials/roots/:id',(req,res)=>{write(req);const r=get('modelroot',req);s.remove('modelroot',r.id,req.project);audit(req,'modelroot.remove',r.path);res.json({ok:true});});
  // 扫描 + 描述批注
  const effectiveRoots=(req)=>[...new Set([...(Array.isArray(s.list('modelroot',req.project))?s.list('modelroot',req.project).map(r=>r.path):[]),...(process.env.MINISTATION_MODEL_SCAN_ROOTS||'').split(',').map(x=>x.trim()).filter(Boolean)])];
@@ -95,7 +96,7 @@ export function installMaterials(app,{s,get,write,audit}){
   res.json({host:safeHost(host),models:out.sort((a,b)=>b.size_gib-a.size_gib)});
  });
  app.put('/api/materials/model-note',(req,res)=>{write(req);const {path,description}=z.object({path:z.string().min(1).max(2000),description:z.string().max(2000)}).parse(req.body);if(existsSync(path)){let rec;try{rec=s.put('modelnote',req.project,path,{path,description,updated_at:now()});}catch{const ex=(s.list('modelnote',req.project)||[]).find(n=>n.path===path);rec=s.update('modelnote',ex.id,req.project,{path,description,updated_at:now()});}audit(req,'modelnote.set',path);res.json({ok:true,description});}else fail(404,'PATH_NOT_FOUND','模型路径不存在');});
- app.post('/api/materials/import',(req,res)=>{write(req);const {path,description}=z.object({path:z.string().min(1).max(2000),description:z.string().max(2000).optional()}).parse(req.body);if(!existsSync(path))fail(404,'PATH_NOT_FOUND','模型路径不存在');const base=path.endsWith('.gguf')?path.split('/').pop().replace(/\.gguf$/i,''):path.split('/').filter(Boolean).pop();let name=base||'模型',i=1;while(s.get('model',name,req.project))name=`${base||'模型'}-${i++}`;const v=s.put('model',req.project,name,{model_name:path,model_version:'local',task:'chat',source:'external',description:description||autoDescription({name:name,path}),created_at:now()});audit(req,'model.import',v.id);res.status(201).json(publicObject(v));});
+ app.post('/api/materials/import',(req,res)=>{write(req);const {path,description}=z.object({path:z.string().min(1).max(2000),description:z.string().max(2000).optional()}).parse(req.body);if(!existsSync(path))fail(404,'PATH_NOT_FOUND','模型路径不存在');const base=basename(resolve(path)).replace(/\.gguf$/i,'');const names=new Set(s.list('model',req.project).map(m=>m.name));let name=base||'模型',i=1;while(names.has(name))name=`${base||'模型'}-${i++}`;const v=s.put('model',req.project,name,{model_name:path,model_version:'local',task:'chat',source:'external',description:description||autoDescription({name:name,path}),created_at:now()});audit(req,'model.import',v.id);res.status(201).json(publicObject(v));});
  // ModelScope 清单 / 下载
  app.get('/api/materials/modelscope/catalog',async(req,res)=>{
   const host=await detectHost().catch(()=>({}));const extra=req.query.model?String(req.query.model).trim():'';
@@ -106,31 +107,31 @@ export function installMaterials(app,{s,get,write,audit}){
  });
  app.get('/api/materials/modelscope/inspect',async(req,res)=>{const id=String(req.query.model||'');const m=await msDetail(id);const host=await detectHost().catch(()=>({}));res.json({...m,fit:fitModel(m.weights_gib,host)});});
  app.get('/api/materials/modelscope/settings',(req,res)=>res.json({dir:defaultDir(s,req.project)}));
- app.post('/api/materials/modelscope/settings',(req,res)=>{write(req);const {dir}=z.object({dir:z.string().min(1).max(2000)}).parse(req.body);if(!dir.startsWith('/'))fail(422,'PATH_ABSOLUTE','下载目录必须是绝对路径');try{mkdirSync(dir,{recursive:true});}catch{fail(422,'PATH_UNWRITABLE','无法创建下载目录');}let rec;try{rec=s.put('setting',req.project,'modelscope-dl',{dir,updated_at:now()});}catch{const ex=(s.list('setting',req.project)||[]).find(x=>x.name==='modelscope-dl');rec=s.update('setting',ex.id,req.project,{dir,updated_at:now()});}audit(req,'modelscope.settings',dir);res.json({dir});});
+ app.post('/api/materials/modelscope/settings',(req,res)=>{write(req);const {dir}=z.object({dir:z.string().min(1).max(2000)}).parse(req.body);if(!isAbsolute(dir))fail(422,'PATH_ABSOLUTE','下载目录必须是绝对路径');try{mkdirSync(dir,{recursive:true});}catch{fail(422,'PATH_UNWRITABLE','无法创建下载目录');}let rec;try{rec=s.put('setting',req.project,'modelscope-dl',{dir,updated_at:now()});}catch{const ex=(s.list('setting',req.project)||[]).find(x=>x.name==='modelscope-dl');rec=s.update('setting',ex.id,req.project,{dir,updated_at:now()});}audit(req,'modelscope.settings',dir);res.json({dir});});
  app.post('/api/materials/modelscope/download',(req,res)=>{
-  write(req);let running=false,child=null;
+  write(req);
   const {model}=z.object({model:z.string().min(1).max(200).regex(MS_ID,'模型 ID 格式应为 “命名空间/模型名”')}).parse(req.body);
-  const dir=defaultDir(s,req.project);
-  if(running)fail(409,'MS_BUSY','已有下载任务进行中，请等待完成');running=true;
+  const dir=join(defaultDir(s,req.project),model.replace('/','@'));
+  if(running)fail(409,'MS_BUSY','已有下载任务进行中，请等待完成');
   audit(req,'modelscope.download',model,{dir});
+  running=true;const ac=new AbortController();
   res.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache','Connection':'keep-alive','X-Accel-Buffering':'no'});res.flushHeaders?.();
-  const send=(event,data)=>res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);let closed=false;
-  const onClose=()=>{closed=true;child?.kill('SIGKILL');};res.on('close',onClose);
+  let closed=false;
+  const send=(event,data)=>{if(!closed)res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);};
+  const onClose=()=>{closed=true;ac.abort();};res.on('close',onClose);
   (async()=>{
    try{
-    if(!existsSync(MS_BIN)){
+    if(!hasTool()){
      send('stage',{stage:'msenv',status:'start',label:'安装 ModelScope 下载工具',phase:'install'});
      const vpy=existsSync(join(ROOT,'.venv-vllm','bin','python'))?join(ROOT,'.venv-vllm','bin','python'):'python3';
-     await runSpawn(vpy,['-m','venv',MS_VENV],t=>send('line',{stage:'msenv',text:t}));
-     await runSpawn(join(MS_VENV,'bin','pip'),['-q','install','--disable-pip-version-check','-i','https://mirrors.aliyun.com/pypi/simple/','modelscope'],t=>send('line',{stage:'msenv',text:t}));
+     await run(vpy,['-m','venv',MS_VENV],t=>send('line',{stage:'msenv',text:t}),{signal:ac.signal});
+     await run(join(MS_VENV,'bin','pip'),['-q','install','--disable-pip-version-check','-i','https://mirrors.aliyun.com/pypi/simple/','modelscope'],t=>send('line',{stage:'msenv',text:t}),{signal:ac.signal});
     }
+    ac.signal.throwIfAborted();
     send('stage',{stage:'download',status:'start',label:`下载 ${model}`,phase:'deploy'});
     mkdirSync(dir,{recursive:true});
-    child=spawn(MS_BIN,['download','--model',model,'--local_dir',dir],{env:{...process.env,CUDA_VISIBLE_DEVICES:''}});
-    child.stdout?.on('data',b=>!closed&&send('line',{stage:'download',text:b.toString()}));
-    child.stderr?.on('data',b=>!closed&&send('line',{stage:'download',text:b.toString()}));
-    await new Promise((r,j)=>{child.on('error',j);child.on('close',code=>code===0?r():j(new Error('下载进程退出码 '+code)));});
-    send('stage',{stage:'download',status:'ok',label:`完成：已保存到 ${dir}/${model.split('/').pop()}`});
+    await run(MS_BIN,['download','--model',model,'--local_dir',dir],t=>send('line',{stage:'download',text:t}),{signal:ac.signal,env:{...process.env,CUDA_VISIBLE_DEVICES:''}});
+    send('stage',{stage:'download',status:'ok',label:`完成：已保存到 ${dir}`});
     send('done',{ok:true,dir});
    }catch(e){send('error',{message:e.message||'下载失败'});}
    finally{running=false;if(!closed)res.end();}
@@ -141,12 +142,3 @@ export function installMaterials(app,{s,get,write,audit}){
 function autoDescription(m){const bits=[];if(m.arch)bits.push(m.arch);if(m.model_type)bits.push(m.model_type);if(m.kind==='hf')bits.push('HF 目录');if(m.kind==='gguf')bits.push('GGUF 文件');const size=typeof m.size_gib==='number'?`${m.size_gib.toFixed(1)} GiB`:'';return [bits.filter(Boolean).join(' · '),size].filter(Boolean).join(' — ')||'本机扫描到的模型';}
 
 function safeHost(h){return {gpu:h.gpu?{available:!!h.gpu.available,count:h.gpu.count||0,model:h.gpu.model||'',memory_mib:h.gpu.memory_mib||0}:null,cpu_cores:h.cpu_cores||0,memory_gib:h.memory_gib||0,disk_free_gib:h.disk_free_gib||null};}
-
-function runSpawn(cmd,args,emit){
- return new Promise((resolve,reject)=>{
-  const c=spawn(cmd,args,{stdio:['ignore','pipe','pipe']});emit(`$ ${[cmd,...args].join(' ')}`);
-  const push=b=>{const s=(b||'').toString();if(s)for(const l of s.split('\n'))if(l.length)emit(l);};
-  c.stdout.on('data',push);c.stderr.on('data',push);c.on('error',reject);
-  c.on('close',code=>code===0?resolve():reject(new Error(`命令退出码 ${code}`)));
- });
-}

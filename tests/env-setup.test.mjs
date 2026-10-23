@@ -1,17 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync} from 'node:fs';
-import {join,resolve} from 'node:path';
-import {createApp} from '../server/app.mjs';
-import {detectEnv,SETUP_STAGES} from '../server/env-setup.mjs';
+import express from 'express';
+import {installEnvSetup,runEnvironmentSetup,SETUP_STAGES} from '../server/env-setup.mjs';
 
 async function harness(t){
- const context=createApp({dataDir:mkdtempSync(join(resolve('artifacts/tests'),'env-'))});
- const server=context.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const app=express();app.use(express.json());
+ const env={os:'test-os',is_root:false,gpu:[],gpu_count:0,cuda_home:null,vllm_venv:null,python_headers:false,disk_free_gib:10};
+ const stages=SETUP_STAGES.map(s=>({...s,guard:()=>true,run:async(e,emit)=>emit('simulated '+s.id)}));
+ installEnvSetup(app,{audit(){},write(req,admin){assert.equal(admin,true);},detect:()=>env,run:(ids,options)=>runEnvironmentSetup(ids,{...options,stages})});
+ app.use((err,req,res,next)=>res.status(err.status||500).json({error:err.message}));
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
  const base='http://127.0.0.1:'+server.address().port;let cookie='';
- t.after(async()=>{await context.local.stopAll();await context.runtime.stop();await context.observer.stop();server.closeAllConnections();await new Promise(r=>server.close(r));await context.gateway.dispatcher.close();context.store.close();});
+ t.after(async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));});
  const api=async(path,body,expected=200,headers={})=>{const response=await fetch(base+path,{method:body?'POST':'GET',headers:{cookie,'Content-Type':'application/json','X-Ministation-Client':'console',...headers},body:body?JSON.stringify(body):undefined});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];const data=await response.json();assert.equal(response.status,expected,JSON.stringify(data));return data;};
- await api('/api/auth/setup',{username:'env-admin',password:'env-test-password'},201);
+
  return {api,base,cookie:()=>cookie};
 }
 
@@ -28,11 +30,11 @@ async function collectStream(base,cookie,stages){
 }
 
 test('环境初始化：detectEnv 与 /api/env-plan 结构',async t=>{
- const e=detectEnv();
- assert.equal(typeof e.gpu_count,'number');assert.equal(typeof e.is_root,'boolean');
- assert.ok(Array.isArray(e.gpu));assert.ok('cuda_home' in e&&'vllm_venv' in e&&'python_headers' in e&&'disk_free_gib' in e);
  const {api}=await harness(t);
  const plan=await api('/api/env-plan');
+ const e=plan.env;
+ assert.equal(typeof e.gpu_count,'number');assert.equal(typeof e.is_root,'boolean');
+ assert.ok(Array.isArray(e.gpu));assert.ok('cuda_home' in e&&'vllm_venv' in e&&'python_headers' in e&&'disk_free_gib' in e);
  assert.ok(plan.env.os.length>0);assert.equal(plan.stages.length,SETUP_STAGES.length);
  for(const s of plan.stages){
   assert.ok(s.id&&s.label&&s.phase);assert.ok(['install','deploy','config','verify','download'].includes(s.phase));
@@ -59,4 +61,12 @@ test('环境初始化：/api/env-run 以 SSE 推流并到达终态',async t=>{
  // 未选择任何有效阶段 → 422
  const empty=await fetch(base+'/api/env-run',{method:'POST',headers:header,body:JSON.stringify({stages:[]})});
  assert.equal(empty.status,422);
+});
+
+test('环境阶段失败后停止后续执行并保留失败事件',async()=>{
+ const events=[];let later=false;
+ const stages=[{id:'first',run:async()=>{throw new Error('simulated failure');}},{id:'later',run:async()=>{later=true;}}];
+ await assert.rejects(runEnvironmentSetup(['first','later'],{env:{},stages,emit:e=>events.push(e)}),/simulated failure/);
+ assert.equal(later,false);
+ assert.deepEqual(events.map(e=>e.status),['start','fail','abort']);
 });

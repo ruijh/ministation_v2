@@ -1,4 +1,4 @@
-import {readdirSync,readFileSync,existsSync,statSync} from 'node:fs';
+import {readdirSync,readFileSync,existsSync,statSync,realpathSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {join,resolve} from 'node:path';
 import {fail} from './domain.mjs';
@@ -7,7 +7,7 @@ import {probeVllm} from './vllm-bin.mjs';
 const GIB=2**30;
 const MB=1024**2;
 
-function dirSize(path){let total=0;try{for(const e of readdirSync(path,{withFileTypes:true})){const p=join(path,e.name);try{const st=statSync(p);if(st.isDirectory())total+=dirSize(p);else if(st.isFile())total+=st.size;}catch{continue;}}}catch{}return total;}
+function dirSize(path,seen=new Set()){let total=0;try{const canonical=realpathSync(path);if(seen.has(canonical))return 0;seen.add(canonical);for(const e of readdirSync(path,{withFileTypes:true})){const p=join(path,e.name);try{const st=statSync(p);if(st.isDirectory())total+=dirSize(p,seen);else if(st.isFile())total+=st.size;}catch{continue;}}}catch{}return total;}
 
 // 扫描一个根目录：直接子项中的 HF 模型目录（config.json + 权重索引）与 .gguf 文件
 export function modelMaxCtx(path){
@@ -39,12 +39,16 @@ export function scanModelRoot(root){
  return {root,models:models.sort((a,b)=>b.size_gib-a.size_gib)};
 }
 
-export function listModelRoots(config,extra=[]){
+export function configuredModelRoots(config,extra=[]){
  const explicit=config.modelScanRoots&&config.modelScanRoots.length?config.modelScanRoots:null;
  const base=(explicit||(config.modelRoot?[config.modelRoot]:['/home','/data','/models','/opt/models'])).filter(Boolean);
  const roots=[...new Set([...base.map(s=>String(s).trim()).filter(Boolean),...extra.map(s=>String(s).trim()).filter(Boolean)])];
+ return roots.map(r=>resolve(r));
+}
+
+export function listModelRoots(config,extra=[]){
  const out=[];
- for(const r of roots){try{out.push(scanModelRoot(r));}catch{continue;}}
+ for(const r of configuredModelRoots(config,extra)){try{out.push(scanModelRoot(r));}catch{continue;}}
  return out.flatMap(x=>x.models);
 }
 
@@ -61,7 +65,7 @@ export function installModelScan(app,{config,s}){
  app.get('/api/local/models',(req,res)=>{
   const extra=Array.isArray(s?.list?.('modelroot',req.project))?s.list('modelroot',req.project).map(r=>r.path):[];
   const dir=req.query.dir?String(req.query.dir):null;
-  if(dir){const resolved=resolve(dir);const allowed=!!listModelRoots(config,extra).find(m=>m.path===resolved)||(config.modelRoot&&resolve(config.modelRoot)===resolved);if(!allowed)fail(403,'PATH_FORBIDDEN','仅允许扫描已配置的模型根目录');return res.json(scanModelRoot(dir));}
+  if(dir){const resolved=resolve(dir);const allowed=configuredModelRoots(config,extra).includes(resolved);if(!allowed)fail(403,'PATH_FORBIDDEN','仅允许扫描已配置的模型根目录');return res.json(scanModelRoot(dir));}
   res.json({models:listModelRoots(config,extra)});
  });
  app.get('/api/local/engines',(req,res)=>res.json(probeEngines(config.localEngineBin||{})));

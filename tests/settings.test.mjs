@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync} from 'node:fs';
+import {mkdtempSync,mkdirSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createApp} from '../server/app.mjs';
 
+mkdirSync('artifacts/tests',{recursive:true});
 async function harness(t){
  const context=createApp({dataDir:mkdtempSync(join(resolve('artifacts/tests'),'settings-'))});
  const server=context.app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
@@ -79,4 +80,30 @@ test('/api/settings 返回成员列表',async t=>{
  const {api}=await harness(t);
  const s=await api('/api/settings');
  assert.ok(Array.isArray(s.members));assert.equal(s.members[0].role,'admin');
+});
+
+test('管理员修改自己的密码后撤销所有旧会话',async t=>{
+ const {api,base,cookie}=await harness(t);
+ const first=cookie();
+ await api('/api/auth/login',{username:'set-admin',password:'settings-test-password'});
+ const second=cookie();
+ const me=await api('/api/me');
+ const result=await api('/api/users/'+me.id,{password:'new-settings-password'},200,{},'PUT');
+ assert.equal(result.session_invalidated,true);
+ for(const token of [first,second]){
+  const response=await fetch(base+'/api/me',{headers:{cookie:token}});
+  assert.equal(response.status,401);await response.text();
+ }
+ await api('/api/auth/login',{username:'set-admin',password:'settings-test-password'},401);
+ await api('/api/auth/login',{username:'set-admin',password:'new-settings-password'});
+ assert.equal((await api('/api/me')).id,me.id);
+});
+
+test('开发者不能执行宿主环境安装',async t=>{
+ const {api}=await harness(t);
+ const project=(await api('/api/projects'))[0];
+ await api('/api/users',{username:'setup-dev',password:'developer-password',role:'developer',project_id:project.id},201);
+ await api('/api/auth/login',{username:'setup-dev',password:'developer-password'});
+ const result=await api('/api/env-run',{stages:['sysdeps']},403);
+ assert.equal(result.error.code,'ROLE_FORBIDDEN');
 });

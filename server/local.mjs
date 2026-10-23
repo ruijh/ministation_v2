@@ -1,8 +1,9 @@
 import {spawn,spawnSync} from 'node:child_process';
 import {createServer} from 'node:net';
-import {closeSync,existsSync,mkdirSync,openSync,readFileSync,statSync,unlinkSync,writeFileSync} from 'node:fs';
+import {appendFileSync,closeSync,existsSync,mkdirSync,openSync,readFileSync,statSync,unlinkSync,writeFileSync} from 'node:fs';
 import {join,resolve,dirname} from 'node:path';
 import os from 'node:os';
+import {readLogTail,localLogFindings} from './local-logs.mjs';
 import {z} from 'zod';
 import {fail,name as nameSchema,assertURL,publicObject} from './domain.mjs';
 import {id,now} from './store.mjs';
@@ -72,7 +73,7 @@ export function buildCommand(spec,config){
 }
 
 function portAvailable(port){return new Promise(resolve=>{const srv=createServer();srv.once('error',()=>resolve(false));srv.listen(port,'127.0.0.1',()=>srv.close(()=>resolve(true)));});}
-async function isHealthy(port,path='/health',timeout=1500){try{const r=await fetch(`http://127.0.0.1:${port}${path}`,{signal:AbortSignal.timeout(timeout)});return r.status===200;}catch{return false;}}
+async function isHealthy(port,path='/health',timeout=1500){try{const r=await fetch(`http://127.0.0.1:${port}${path}`,{signal:AbortSignal.timeout(timeout)});await r.body?.cancel();return r.status===200;}catch{return false;}}
 function alive(pid){if(!pid||pid<=0)return false;try{process.kill(pid,0);return true;}catch{return false;}}
 
 export function createLocalDeployments({store,config}){
@@ -84,13 +85,52 @@ export function createLocalDeployments({store,config}){
  const pidPath=oid=>join(dir,oid+'.pid');
  function record(project,oid){const v=store.get('local',oid,project);if(!v)fail(404,'NOT_FOUND','本机部署不存在或没有访问权限');return v;}
  function live(rec){const running=alive(rec.pid);if(!running)return {status:'Stopped',pid:null,healthy:false,reason:rec.reason||'进程未运行'};return {status:rec.status,pid:rec.pid,healthy:null,reason:rec.reason||null};}
- async function detailed(rec){const base=live(rec);if(base.status==='Stopped')return {...base,log:logTail(rec.id,60)};const port=rec.spec?.port||rec.port;const healthy=await isHealthy(port,rec.health_path||'/health');let reason=base.reason;if(rec.status==='Starting'){if(healthy){store.update('local',rec.id,rec.project_id,{status:'Running',reason:null});reason=null;}else reason='引擎已启动，等待健康检查通过（首次加载模型可能需要较长时间）';}else if(!healthy){reason='进程存在但健康检查失败，请查看日志';}return {...base,healthy,reason,log:logTail(rec.id,60)};}
- function logTail(oid,n=60){try{const text=readFileSync(logPath(oid),'utf8');const lines=text.split(/\r?\n/).filter(Boolean);return {lines:lines.slice(-n),size:text.length};}catch{return {lines:[],size:0};}}
-  // 从引擎日志尾部摘取“最可能”的真实错误行，把状态从“进程退出 代码 1”升级为可读原因
-  function extractError(lines){const arr=lines||[];const noise=s=>/DeprecationWarning/.test(s)||/https?:\/\//.test(s)||/^\s*\(?(INFO|WARNING|DEBUG)\b/.test(s)||/^-\s|^(For|If this is|See)\b|^Traceback \(most recent call last\)$/.test(s);const strong=s=>/(oom\b|out of memory|not enough memory|insufficient|cannot allocate|no space left|address already in use|permission denied)/i.test(s);const weak=s=>/(error|traceback|exception|fatal|cuda|not found|value error|no module)/i.test(s);let hit='';for(let i=arr.length-1;i>=0&&i>arr.length-500;i--){const s=String(arr[i]).trim();if(!s||s.length>2000||noise(s))continue;if(strong(s))return s.slice(0,260);if(weak(s)&&s.length<300&&!hit)hit=s;}return hit.slice(0,260);}
+ async function detailed(rec){
+  let base=live(rec);
+  if(base.status!=='Stopped'){
+   const healthy=await isHealthy(rec.spec?.port||rec.port,rec.health_path||'/health');
+   rec=record(rec.project_id,rec.id);base=live(rec);
+   if(base.status!=='Stopped'){
+    base.healthy=healthy;
+    if(rec.status==='Starting'&&healthy){rec=store.update('local',rec.id,rec.project_id,{status:'Running',reason:null,ready_at:now()});base.status='Running';base.reason=null;}
+    else if(!healthy)base.reason=rec.status==='Starting'?'引擎已启动，等待健康检查通过（首次加载模型可能需要较长时间）':'进程存在但健康检查失败，请查看日志';
+   }
+  }
+  const log=logTail(rec.id,500,rec.log_offset||0);
+  return {...rec,...base,log:{...log,lines:log.lines.slice(-60),truncated:log.truncated||log.lines.length>60},findings:localLogFindings(log.lines)};
+ }
+ function logTail(oid,n=60,offset=0){const {text,...result}=readLogTail(logPath(oid),{offset,lines:n});return result;}
  async function launch(rec){const spec=rec.spec;
   // 启动前校验：请求的 GPU 数不得超过本机当前可见的 GPU 数（避免“World size > GPUs”这类启动即退）
-  if(spec.engine==='vllm'&&spec.gpus>0){let avail=0;try{const h=await detectHost();avail=h.gpu?.count||0;}catch{}if(avail>0&&spec.gpus>avail)throw new Error(`本机可用 GPU ${avail} 块，少于配置的 ${spec.gpus} 块（tensor_parallel_size）；已拒绝启动，请减少 GPU 数量或先确认其余 GPU 对控制面可见`);}const {command,args}=buildCommand(spec,config);const env={...process.env,...(spec.threads?{OMP_NUM_THREADS:String(spec.threads)}:{})};if(spec.engine==='llamacpp'&&existsSync(command[0])){env.LD_LIBRARY_PATH=[dirname(resolve(command[0])),env.LD_LIBRARY_PATH].filter(Boolean).join(':');}const fd=openSync(logPath(rec.id),'a');const child=spawn(command[0],[...command.slice(1),...args],{env,stdio:['ignore',fd,fd],detached:false});children.set(child.pid,child);writeFileSync(pidPath(rec.id),String(child.pid));store.update('local',rec.id,rec.project_id,{pid:child.pid,status:'Starting',reason:null,started_at:now(),command:[...command,...args]});child.on('exit',(code,signal)=>{try{children.delete(child.pid);const cur=store.get('local',rec.id,rec.project_id);if(cur&&cur.status!=='Stopped'&&!intentional.has(rec.id)){let tail=[];try{tail=readFileSync(logPath(rec.id),'utf8').split(/\r?\n/).filter(Boolean);}catch{}const err=extractError(tail);store.update('local',rec.id,rec.project_id,{status:'Stopped',reason:`进程退出 ${signal?`信号 ${signal}`:`代码 ${code}`}${err?`：${err}`:''}`});}intentional.delete(rec.id);}catch{}try{closeSync(fd);}catch{}});}
+  if(spec.engine==='vllm'&&spec.gpus>0){let avail=0;try{const h=await detectHost();avail=h.gpu?.count||0;}catch{}if(avail>0&&spec.gpus>avail)throw new Error(`本机可用 GPU ${avail} 块，少于配置的 ${spec.gpus} 块（tensor_parallel_size）；已拒绝启动，请减少 GPU 数量或先确认其余 GPU 对控制面可见`);}const {command,args}=buildCommand(spec,config);const env={...process.env,...(spec.threads?{OMP_NUM_THREADS:String(spec.threads)}:{})};if(spec.engine==='llamacpp'&&existsSync(command[0])){env.LD_LIBRARY_PATH=[dirname(resolve(command[0])),env.LD_LIBRARY_PATH].filter(Boolean).join(':');}const runId=id(),startedAt=now();
+  const offset=existsSync(logPath(rec.id))?statSync(logPath(rec.id)).size:0;
+  appendFileSync(logPath(rec.id),'\n[MiniStation] run '+runId+' started '+startedAt+'\n');
+  store.update('local',rec.id,rec.project_id,{pid:null,status:'Starting',reason:null,run_id:runId,log_offset:offset,started_at:startedAt,ready_at:null,finished_at:null,exit_code:null,exit_signal:null,command:[...command,...args]});
+  const fd=openSync(logPath(rec.id),'a');let child;
+  const finish=(code,signal,error)=>{
+   const finishedAt=now();
+   appendFileSync(logPath(rec.id),'\n[MiniStation] run '+runId+' finished '+finishedAt+' '+(error?error.message:'code='+code+' signal='+(signal||'none'))+'\n');
+   children.delete(child?.pid);
+   const cur=store.get('local',rec.id,rec.project_id);
+   if(cur?.run_id!==runId)return;
+   const findings=localLogFindings(logTail(rec.id,500,offset).lines);
+   const manual=intentional.has(rec.id);intentional.delete(rec.id);
+   store.update('local',rec.id,rec.project_id,{pid:null,status:'Stopped',finished_at:finishedAt,exit_code:code,exit_signal:signal||null,findings,reason:manual?'已手动停止':error?.message||('进程退出 '+(signal?'信号 '+signal:'代码 '+code)+(code!==0&&findings.length?'：'+findings[0].evidence:''))});
+   try{unlinkSync(pidPath(rec.id));}catch{}
+  };
+  try{child=spawn(command[0],[...command.slice(1),...args],{env,stdio:['ignore',fd,fd],detached:false});}
+  catch(error){closeSync(fd);finish(null,null,error);return;}
+  closeSync(fd); // Child owns duplicated descriptors; no parent descriptor leak.
+  let spawnError;
+  child.on('error',error=>{spawnError=error;});
+  child.on('spawn',()=>{
+   children.set(child.pid,child);writeFileSync(pidPath(rec.id),String(child.pid));
+   if(store.get('local',rec.id,rec.project_id)?.run_id===runId)store.update('local',rec.id,rec.project_id,{pid:child.pid});
+  });
+  child.on('close',(code,signal)=>{try{finish(code,signal,spawnError);}catch(error){console.error('local_exit_record_failed',rec.id,error.message);}});
+  await new Promise(resolve=>{child.once('spawn',resolve);child.once('close',resolve);});
+ }
+
  return {
   detectHost,
   dir,
@@ -118,9 +158,9 @@ export function createLocalDeployments({store,config}){
    return {...rec,status:'Starting'};
   },
   async stop(project,oid){const rec=record(project,oid);intentional.add(rec.id);const pid=rec.pid;store.update('local',rec.id,project,{status:'Stopped',reason:'已手动停止'});if(pid&&alive(pid)){try{process.kill(pid,'SIGTERM');}catch{}await new Promise(r=>setTimeout(r,1500));if(alive(pid)){try{process.kill(pid,'SIGKILL');}catch{}}}try{unlinkSync(pidPath(rec.id));}catch{}return this.get(project,oid);},
-  async start(project,oid){const rec=record(project,oid);if(alive(rec.pid)&&rec.status==='Running')return this.get(project,oid);intentional.delete(rec.id);try{await launch(rec);}catch(e){store.update('local',rec.id,project,{status:'Stopped',reason:e.message});}return this.get(project,oid);},
+  async start(project,oid){const rec=record(project,oid);if(alive(rec.pid)||rec.status==='Starting'&&children.has(rec.pid))return this.get(project,oid);intentional.delete(rec.id);try{await launch(rec);}catch(e){store.update('local',rec.id,project,{status:'Stopped',reason:e.message});}return this.get(project,oid);},
   async remove(project,oid){const rec=record(project,oid);if(store.list('backend',project).some(b=>b.local_id===rec.id))fail(409,'LOCAL_IN_USE','已有接入服务引用该本机部署，请先删除或改绑');await this.stop(project,oid);store.remove('local',oid,project);return {ok:true};},
-  async stopAll(){for(const p of store.list('project','system'))for(const rec of store.list('local',p.id))if(alive(rec.pid)){try{process.kill(rec.pid,'SIGTERM');}catch{}}children.clear();},
+  async stopAll(){for(const p of store.list('project','system'))for(const rec of store.list('local',p.id))if(alive(rec.pid))await this.stop(p.id,rec.id);children.clear();},
   logTail,
   isHealthy,
  };
@@ -158,7 +198,7 @@ export function recommendParams({model,engine,gpus,host,scanModelSize=0,arch='',
 const CRC32_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);t[n]=c>>>0;}return t;})();
 export function crc32(buf){let c=0xFFFFFFFF;for(let i=0;i<buf.length;i++)c=CRC32_TABLE[(c^buf[i])&0xFF]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
 function dosDateTime(d){return {time:((d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1))&0xFFFF,date:(((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate())&0xFFFF};}
-export function zipStore(files){const parts=[];const central=[];let offset=0;for(const f of files){const data=Buffer.isBuffer(f.data)?f.data:Buffer.from(String(f.data));const crc=crc32(data)>>>0;const {time,date}=dosDateTime(f.mtime||new Date());const name=Buffer.from(f.name);const lh=Buffer.alloc(30);lh.writeUInt32LE(0x04034b50,0);lh.writeUInt16LE(20,4);lh.writeUInt16LE(0,6);lh.writeUInt16LE(0,8);lh.writeUInt16LE(0,10);lh.writeUInt16LE(time,12);lh.writeUInt16LE(date,14);lh.writeUInt32LE(crc,16);lh.writeUInt32LE(data.length,20);lh.writeUInt32LE(data.length,24);lh.writeUInt16LE(name.length,26);lh.writeUInt16LE(0,28);parts.push(lh,name,data);central.push({name,crc,size:data.length,offset});offset+=30+name.length+data.length;}
+export function zipStore(files){const parts=[];const central=[];let offset=0;for(const f of files){const data=Buffer.isBuffer(f.data)?f.data:Buffer.from(String(f.data));const crc=crc32(data)>>>0;const {time,date}=dosDateTime(f.mtime||new Date());const name=Buffer.from(f.name);const lh=Buffer.alloc(30);lh.writeUInt32LE(0x04034b50,0);lh.writeUInt16LE(20,4);lh.writeUInt16LE(0,6);lh.writeUInt16LE(0,8);lh.writeUInt16LE(time,10);lh.writeUInt16LE(date,12);lh.writeUInt32LE(crc,14);lh.writeUInt32LE(data.length,18);lh.writeUInt32LE(data.length,22);lh.writeUInt16LE(name.length,26);lh.writeUInt16LE(0,28);parts.push(lh,name,data);central.push({name,crc,size:data.length,offset});offset+=30+name.length+data.length;}
 const cdStart=offset;const cd=[];for(const c of central){const name=Buffer.from(c.name);const ch=Buffer.alloc(46);ch.writeUInt32LE(0x02014b50,0);ch.writeUInt16LE(20,4);ch.writeUInt16LE(20,6);ch.writeUInt16LE(0,8);ch.writeUInt16LE(0,10);ch.writeUInt16LE(0,12);ch.writeUInt16LE(0,14);ch.writeUInt32LE(c.crc,16);ch.writeUInt32LE(c.size,20);ch.writeUInt32LE(c.size,24);ch.writeUInt16LE(name.length,28);ch.writeUInt16LE(0,30);ch.writeUInt16LE(0,32);ch.writeUInt16LE(0,34);ch.writeUInt16LE(0,36);ch.writeUInt32LE(0,38);ch.writeUInt32LE(c.offset,42);cd.push(ch,name);}
 const cdSize=cd.reduce((n,x)=>n+x.length,0);const eocd=Buffer.alloc(22);eocd.writeUInt32LE(0x06054b50,0);eocd.writeUInt16LE(0,4);eocd.writeUInt16LE(0,6);eocd.writeUInt16LE(central.length,8);eocd.writeUInt16LE(central.length,10);eocd.writeUInt32LE(cdSize,12);eocd.writeUInt32LE(cdStart,16);eocd.writeUInt16LE(0,20);return Buffer.concat([...parts,...cd,eocd]);}
 
@@ -187,13 +227,15 @@ export function installLocal(app,{s,config,local,get,write,audit}){
  });
   // 诊断包：完整引擎日志 + 部署记录 + 主机/GPU/内存/磁盘 + 模型路径探测，打包 zip 下载
   app.get('/api/local/:id/diagnostics',async(req,res)=>{
-   const rec=local.get(req.project,req.params.id);
-   const grab=(cmd,args)=>spawnSync(cmd,args,{encoding:'utf8',timeout:5000,stdio:['ignore','pipe','ignore']}).stdout||'';
+   const rec=await local.refresh(req.project,req.params.id);
+   const grab=(cmd,args)=>{const result=spawnSync(cmd,args,{encoding:'utf8',timeout:5000,maxBuffer:1024*1024,windowsHide:true,stdio:['ignore','pipe','pipe']});return JSON.stringify({command:[cmd,...args],exit_code:result.status,signal:result.signal,error:result.error?.code,stdout:result.stdout||'',stderr:result.stderr||''},null,2);};
    const basename=`diagnose-${rec.id.slice(0,8)}`;
    const files=[];
-   let engineLog='（无日志文件：该部署尚未产生引擎输出）';
-   try{engineLog=readFileSync(join(local.dir,rec.id+'.log'),'utf8');if(engineLog.length>5*1024*1024)engineLog='… 日志截断（超过 5MB，仅保留尾部）…\n'+engineLog.slice(-5*1024*1024);}catch{}
-   files.push({name:`${basename}/engine.log`,data:engineLog});
+   const log=readLogTail(join(local.dir,rec.id+'.log'),{maxBytes:5*1024*1024,lines:Number.MAX_SAFE_INTEGER});
+   files.push({name:`${basename}/engine.log`,data:log.available?log.text:'（无可读取的日志文件）'});
+   const current=readLogTail(join(local.dir,rec.id+'.log'),{offset:rec.log_offset||0,maxBytes:5*1024*1024,lines:1000});
+   files.push({name:`${basename}/current-run.log`,data:current.text});
+   files.push({name:`${basename}/analysis.json`,data:JSON.stringify({observed_at:now(),run_id:rec.run_id,status:rec.status,healthy:rec.healthy,exit_code:rec.exit_code,exit_signal:rec.exit_signal,findings:localLogFindings(current.lines),log:{available:log.available,error:log.error,size_bytes:log.size,bytes_read:log.bytes_read,truncated:log.truncated},current_run:{bytes_read:current.bytes_read,truncated:current.truncated},note:'日志规则仅提供证据提示；未发现错误不代表部署成功。以健康检查和进程状态为准。'},null,2)});
    files.push({name:`${basename}/deployment.json`,data:JSON.stringify(rec,null,2)});
    let host=null;try{host=await local.detectHost();}catch{}
    files.push({name:`${basename}/host-env.txt`,data:[
@@ -214,7 +256,7 @@ export function installLocal(app,{s,config,local,get,write,audit}){
    const m=rec.spec?.model||'';const mi={path:m,exists:existsSync(m)};if(mi.exists){try{const st=statSync(m);mi.is_directory=st.isDirectory();if(st.isDirectory())mi.has_config_json=existsSync(join(m,'config.json'));else mi.size_gib=+(st.size/2**30).toFixed(2);}catch{}}
    files.push({name:`${basename}/model-info.json`,data:JSON.stringify(mi,null,2)});
    const zip=zipStore(files);
-   const ascii=String(rec.name).replace(/[^\x20-\x7e]/g,'_').slice(0,60);
+   const ascii=String(rec.name).replace(/[^a-zA-Z0-9_.-]/g,'_').slice(0,60);
    res.setHeader('Content-Type','application/zip');
    res.setHeader('Content-Disposition',`attachment; filename="ministation-diagnose-${ascii||'deploy'}-${rec.id.slice(0,8)}.zip"; filename*=UTF-8''${encodeURIComponent(`ministation-diagnose-${rec.name}.zip`)}`);
    res.end(zip);

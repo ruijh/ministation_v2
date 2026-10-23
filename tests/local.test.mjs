@@ -46,7 +46,7 @@ test('本机部署完整链路：部署→接入→发布→调用→用量',asy
 
  // 等待运行
  let rec;for(let i=0;i<40;i++){rec=await api('/api/local/'+created.id);if(rec.status==='Running')break;await new Promise(r=>setTimeout(r,250));}
- assert.equal(rec.status,'Running',rec.reason+(rec.log?.lines||[]).join('\n'));assert.ok(rec.healthy);assert.ok(rec.log.lines.some(l=>/ready/.test(l)));
+ assert.equal(rec.status,'Running',rec.reason+(rec.log?.lines||[]).join('\n'));assert.ok(rec.healthy);assert.ok(rec.ready_at);assert.deepEqual(rec.findings,[]);assert.ok(rec.log.lines.some(l=>/ready/.test(l)));
  assert.equal(rec.base_url,`http://127.0.0.1:${port}/v1`);
 
  const onboarding=await api('/api/local/'+created.id+'/onboarding');assert.equal(onboarding.ready,true);assert.equal(onboarding.suggestion.base_url,`http://127.0.0.1:${port}/v1`);assert.equal(onboarding.suggestion.upstream_model,'stub-model');
@@ -61,7 +61,7 @@ test('本机部署完整链路：部署→接入→发布→调用→用量',asy
 
  // 停止后不能创建引用它的接入服务
  await api('/api/local/'+created.id+'/stop',{});
- const stopped=await api('/api/local/'+created.id);assert.equal(stopped.status,'Stopped');
+ const stopped=await api('/api/local/'+created.id);assert.equal(stopped.status,'Stopped');assert.ok(stopped.log.lines.some(l=>/ready/.test(l)));assert.ok(stopped.finished_at);assert.equal(stopped.reason,'已手动停止');
  await api('/api/backends',{name:'接入被拒',logical_model:'x',upstream_model:'x',local_id:created.id,base_url:stopped.base_url},409);
  await api('/api/local/'+created.id+'/start',{});
  for(let i=0;i<40;i++){rec=await api('/api/local/'+created.id);if(rec.status==='Running')break;await new Promise(r=>setTimeout(r,250));}
@@ -93,7 +93,8 @@ test('detectHost 与 localEnvironment 的 GPU 分支',async t=>{
  const config={};const local=createLocalDeployments({store:s,config});
  t.after(()=>s.close());
  const noGpu=await detectHost({gpuProbe:async()=>null});assert.equal(noGpu.gpu,null);assert.ok(noGpu.cpu_cores>0);
- const env=await localEnvironment(local);assert.equal(env.state,'local');assert.equal(env.recommendation.resources.gpus,0);
+ const env=await localEnvironment(local);assert.equal(env.state,'local');
+ const noGpuEnv=await localEnvironment({detectHost:async()=>({cpu_cores:8,memory_gib:64,gpu:null,arch:'x64'})});assert.equal(noGpuEnv.recommendation.resources.gpus,0);
  const withGpu=await detectHost({gpuProbe:async()=>({available:true,count:2,model:'L20',memory_mib:49152})});assert.equal(withGpu.gpu.count,2);
  const withGpuLocal=await localEnvironment({detectHost:async()=>({cpu_cores:16,memory_gib:128,gpu:{available:true,count:1,model:'L20'},arch:'x64'})});assert.equal(withGpuLocal.recommendation.resources.gpus,1);
 });
@@ -106,7 +107,8 @@ test('本机模型扫描与引擎探测',async t=>{
  writeFileSync(join(modelsRoot,'tiny.gguf'),'gguf');
  const {api}=await harness(t,{modelScanRoots:[modelsRoot]});
  const {models}=await api('/api/local/models');
- const hf=models.find(m=>m.path.endsWith('/Qwen3-Test'));
+ const configured=await api('/api/local/models?dir='+encodeURIComponent(modelsRoot));assert.equal(configured.models.length,2);
+ const hf=models.find(m=>m.path===join(modelsRoot,'Qwen3-Test'));
  assert.ok(hf&&hf.kind==='hf'&&hf.arch==='Qwen3ForCausalLM',JSON.stringify(models));
  assert.ok(models.some(m=>m.path.endsWith('tiny.gguf')&&m.kind==='gguf'),JSON.stringify(models));
  const eg=await api('/api/local/engines');
@@ -232,4 +234,42 @@ test('模型扫描根目录默认回退（空数组不应吞掉默认）',async 
  assert.ok(scanModelRoot(root).models.some(m=>m.path.endsWith('dummy.gguf')));
  assert.ok(listModelRoots({modelScanRoots:[],modelRoot:root}).some(m=>m.path.endsWith('dummy.gguf')));
  assert.ok(typeof probeEngines({llamacpp:'path-not-exists',vllm:''}).llamacpp.available==='boolean');
+});
+
+test('本机日志：可执行文件缺失不会崩溃，诊断包保留启动错误',async t=>{
+ const {api,base,cookie}=await harness(t);
+ const rec=await api('/api/local',{name:'missing-binary',engine:'custom',model:stub,port:await freePort(),command:[join(resolve('artifacts/tests'),'does-not-exist-engine')]},201);
+ let failed;
+ for(let i=0;i<40;i++){failed=await api('/api/local/'+rec.id);if(failed.finished_at)break;await new Promise(r=>setTimeout(r,25));}
+ assert.equal(failed.status,'Stopped');assert.match(failed.reason,/ENOENT/);
+ assert.ok(failed.finished_at);assert.equal(failed.pid,null);
+ assert.ok(failed.log.lines.some(line=>line.includes('ENOENT')));
+ assert.ok(failed.findings.some(f=>f.code==='SPAWN_FAILED'));
+ const response=await fetch(base+'/api/local/'+rec.id+'/diagnostics',{headers:{cookie:cookie()}});
+ assert.equal(response.status,200);const zip=Buffer.from(await response.arrayBuffer());
+ const files=new Map();let offset=0;
+ while(zip.readUInt32LE(offset)===0x04034b50){
+  const length=zip.readUInt32LE(offset+18),nameLength=zip.readUInt16LE(offset+26),extra=zip.readUInt16LE(offset+28);
+  const name=zip.subarray(offset+30,offset+30+nameLength).toString();
+  const start=offset+30+nameLength+extra;files.set(name.split('/').pop(),zip.subarray(start,start+length).toString());offset=start+length;
+ }
+ assert.equal(zip.readUInt32LE(offset),0x02014b50);
+ assert.match(files.get('engine.log'),/ENOENT/);assert.match(files.get('current-run.log'),/ENOENT/);
+ const analysis=JSON.parse(files.get('analysis.json'));assert.ok(analysis.findings.some(f=>f.code==='SPAWN_FAILED'));
+ assert.equal(analysis.run_id,failed.run_id);assert.equal(analysis.log.available,true);
+ writeFileSync(join(resolve('artifacts/tests'),'diagnostics-validation.zip'),zip);
+});
+
+test('本机日志：失败后重启不会用旧错误诊断新一轮成功退出',async t=>{
+ const {api,store,user}=await harness(t);
+ const rec=await api('/api/local',{name:'restart-log',engine:'custom',model:stub,port:await freePort(),command:[process.execPath],args:['-e',"console.error('CUDA out of memory');process.exitCode=1"]},201);
+ let failed;for(let i=0;i<40;i++){failed=await api('/api/local/'+rec.id);if(failed.finished_at)break;await new Promise(r=>setTimeout(r,25));}
+ assert.equal(failed.exit_code,1);assert.ok(failed.findings.some(f=>f.code==='GPU_OOM'));
+ store.update('local',rec.id,user.project_id,{spec:{...failed.spec,args:['-e',"console.log('INFO CUDA initialized successfully')"]}});
+ await api('/api/local/'+rec.id+'/start',{});
+ let clean;for(let i=0;i<40;i++){clean=await api('/api/local/'+rec.id);if(clean.finished_at&&clean.run_id!==failed.run_id)break;await new Promise(r=>setTimeout(r,25));}
+ assert.equal(clean.exit_code,0);assert.notEqual(clean.run_id,failed.run_id);
+ assert.deepEqual(clean.findings,[]);assert.ok(clean.log.lines.some(l=>l.includes('initialized successfully')));
+ assert.ok(clean.log.lines.every(l=>!l.includes('out of memory')));
+ assert.ok(clean.log_offset>failed.log_offset);
 });

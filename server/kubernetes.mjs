@@ -13,5 +13,5 @@ export class Kubernetes{
  async assertQuota(ns){const q=await this.request(`/api/v1/namespaces/${encodeURIComponent(ns)}/resourcequotas`);if(!q.items?.some(x=>x.spec?.hard?.['requests.cpu']&&x.spec.hard['requests.memory']))fail(422,'QUOTA_REQUIRED','命名空间缺少CPU和内存ResourceQuota，拒绝创建工作负载');}
  async deployment(ns,name){return this.request(`/apis/apps/v1/namespaces/${ns}/deployments/${name}`);}
  async scale(ns,name,replicas){return this.request(`/apis/apps/v1/namespaces/${ns}/deployments/${name}/scale`,'PATCH',{spec:{replicas}});}
- async logs(ns,pod,previous=false){return this.request(`/api/v1/namespaces/${ns}/pods/${encodeURIComponent(pod)}/log?tailLines=100&previous=${previous}`);}
+ async logs(ns,pod,previous=false,container){const query=new URLSearchParams({tailLines:'200',limitBytes:'262144',timestamps:'true',previous:String(previous)});if(container)query.set('container',container);return this.request(`/api/v1/namespaces/${encodeURIComponent(ns)}/pods/${encodeURIComponent(pod)}/log?${query}`);}
 }
