@@ -99,7 +99,7 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 | /api/materials/models | GET | 扫描结果：HF 目录 / GGUF 及大小、适配判定 |
 | /api/materials/model-note | PUT | 修改扫描模型描述 |
 | /api/materials/import | POST | 把扫描路径导入为模型版本（本地快照） |
-| /api/materials/modelscope/catalog | GET | ModelScope 清单（按本机资源过滤适配） |
+| /api/materials/modelscope/catalog | GET | ModelScope 清单（默认使用本机缓存，按本机资源过滤适配；`?refresh=1` 强制刷新） |
 | /api/materials/modelscope/inspect | GET | 按模型 ID 查询元数据 |
 | /api/materials/modelscope/settings | GET / POST | 下载目录配置 |
 | /api/materials/modelscope/download | POST | SSE 流式下载（event=stage/line/done/error） |

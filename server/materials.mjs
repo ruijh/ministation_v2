@@ -57,19 +57,23 @@ export function normalizeMsDetail(d){
 }
 
 const cache=new Map();
-async function msFetch(id,timeoutMs=9000){
- if(cache.get(id)?.t>Date.now()-600000)return cache.get(id).v;
+async function msFetch(id,timeoutMs=9000,force=false){
+ if(!force&&cache.get(id)?.t>Date.now()-600000)return cache.get(id).v;
  const response=await fetch(MS_BASE+id,{signal:AbortSignal.timeout(timeoutMs),headers:{'User-Agent':'MiniStation/0.1','Accept':'application/json'}});
  if(!response.ok){await response.body?.cancel();throw new Error('HTTP '+response.status);}
  const c=await response.json();
  cache.set(id,{t:Date.now(),v:c});
  return c;
 }
-async function msDetail(id){
+async function msDetail(id,force=false){
  if(!MS_ID.test(id))fail(422,'INVALID_MODEL_ID','模型 ID 应为 “命名空间/模型名”，如 Qwen/Qwen2.5-7B-Instruct');
- const j=await msFetch(id);if(!j?.Data)throw new Error('模型不存在或无法读取');
+ const j=await msFetch(id,9000,force);if(!j?.Data)throw new Error('模型不存在或无法读取');
  return normalizeMsDetail(j.Data);
 }
+
+const MS_CATALOG_CACHE='modelscope-catalog';
+function findSetting(s,project,name){return (s.list('setting',project)||[]).find(x=>x.name===name);}
+function saveSetting(s,project,name,data){try{return s.put('setting',project,name,data);}catch{const old=findSetting(s,project,name);return s.update('setting',old.id,project,data);}}
 
 function defaultDir(s,project){const rec=(Array.isArray(s.list('setting',project))?s.list('setting',project):[]).find(x=>x.name==='modelscope-dl');return rec?.dir&&isAbsolute(rec.dir)?rec.dir:DEFAULT_DL_DIR;}
 
@@ -99,11 +103,17 @@ export function installMaterials(app,{s,get,write,audit,run=runProcess,hasTool=(
  app.post('/api/materials/import',(req,res)=>{write(req);const {path,description}=z.object({path:z.string().min(1).max(2000),description:z.string().max(2000).optional()}).parse(req.body);if(!existsSync(path))fail(404,'PATH_NOT_FOUND','模型路径不存在');const base=basename(resolve(path)).replace(/\.gguf$/i,'');const names=new Set(s.list('model',req.project).map(m=>m.name));let name=base||'模型',i=1;while(names.has(name))name=`${base||'模型'}-${i++}`;const v=s.put('model',req.project,name,{model_name:path,model_version:'local',task:'chat',source:'external',description:description||autoDescription({name:name,path}),created_at:now()});audit(req,'model.import',v.id);res.status(201).json(publicObject(v));});
  // ModelScope 清单 / 下载
  app.get('/api/materials/modelscope/catalog',async(req,res)=>{
-  const host=await detectHost().catch(()=>({}));const extra=req.query.model?String(req.query.model).trim():'';
+  const host=await detectHost().catch(()=>({}));const extra=req.query.model?String(req.query.model).trim():'';const refresh=req.query.refresh==='1';
+  const cached=findSetting(s,req.project,MS_CATALOG_CACHE);
+  if(cached&&!refresh){
+   res.json({...cached,host:safeHost(host),models:(cached.models||[]).map(m=>({...m,fit:fitModel(m.weights_gib,host)})),cached:true,updated_at:cached.updated_at});
+   return;
+  }
   const ids=[...MS_CATALOG,...(extra?[extra]:[])];const models=[];const failed=[];
-  const queue=[...ids];const workers=Array.from({length:Math.min(4,queue.length)||1},async()=>{while(queue.length){const id=queue.shift();try{const m=await msDetail(id);models.push({...m,fit:fitModel(m.weights_gib,host)});}catch(e){failed.push({id,error:e.message});}}});
+  const queue=[...ids];const workers=Array.from({length:Math.min(4,queue.length)||1},async()=>{while(queue.length){const id=queue.shift();try{const m=await msDetail(id,true);models.push({...m,fit:fitModel(m.weights_gib,host)});}catch(e){failed.push({id,error:e.message});}}});
   await Promise.all(workers);
-  res.json({host:safeHost(host),models,failed});
+  if(models.length){const saved=saveSetting(s,req.project,MS_CATALOG_CACHE,{host:safeHost(host),models,failed});res.json({host:safeHost(host),models,failed,cached:false,updated_at:saved.updated_at});}
+  else res.json({host:safeHost(host),models,failed,cached:false,updated_at:null});
  });
  app.get('/api/materials/modelscope/inspect',async(req,res)=>{const id=String(req.query.model||'');const m=await msDetail(id);const host=await detectHost().catch(()=>({}));res.json({...m,fit:fitModel(m.weights_gib,host)});});
  app.get('/api/materials/modelscope/settings',(req,res)=>res.json({dir:defaultDir(s,req.project)}));

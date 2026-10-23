@@ -68,3 +68,17 @@ test('ModelScope 下载设置：缺省目录与自定义目录',async t=>{
  await api('/api/materials/modelscope/settings',{dir},200);
  assert.equal((await api('/api/materials/modelscope/settings')).dir,dir);
 });
+
+test('ModelScope 清单缓存：默认读缓存，仅刷新清单访问网络',async t=>{
+ const {api,base}=await harness(t);const originalFetch=globalThis.fetch;let calls=0;
+ const payload={Data:{Path:'Qwen',Name:'Qwen2.5-7B-Instruct',ModelInfos:{safetensor:{model_size:1,files:[]}},StorageSize:1}};
+ globalThis.fetch=async(url,init)=>String(url).startsWith(base)?originalFetch(url,init):(()=>{calls++;return {ok:true,json:async()=>payload};})();
+ try{
+  const first=await api('/api/materials/modelscope/catalog');
+  assert.equal(first.cached,false);assert.equal(first.models.length,MS_CATALOG.length);assert.equal(calls,MS_CATALOG.length);
+  const second=await api('/api/materials/modelscope/catalog');
+  assert.equal(second.cached,true);assert.equal(second.models.length,MS_CATALOG.length);assert.equal(second.updated_at,first.updated_at);assert.equal(calls,MS_CATALOG.length);
+  const refreshed=await api('/api/materials/modelscope/catalog?refresh=1');
+  assert.equal(refreshed.cached,false);assert.equal(refreshed.models.length,MS_CATALOG.length);assert.equal(calls,MS_CATALOG.length*2);
+ }finally{globalThis.fetch=originalFetch;}
+});
