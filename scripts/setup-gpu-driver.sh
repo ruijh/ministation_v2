@@ -9,8 +9,24 @@ KVER="$(uname -r)"
 echo ">> 内核: $KVER  版本: $VERSION"
 [ -e "/lib/modules/$KVER/build" ] || { echo "缺少 $KVER 内核头文件（/lib/modules/$KVER/build）；先装 kernel-devel 或补齐编译树。"; exit 1; }
 echo ">> 下载驱动…"
-[ -f "/tmp/NVIDIA-Linux-x86_64-${VERSION}.run" ] || curl -fL -o "/tmp/NVIDIA-Linux-x86_64-${VERSION}.run" "$URL"
-chmod +x "/tmp/NVIDIA-Linux-x86_64-${VERSION}.run"
+RUN="/tmp/NVIDIA-Linux-x86_64-${VERSION}.run"
+echo ">> /tmp 剩余空间: $(df -h /tmp | awk 'NR==2{print $4}')"
+run_ok(){ [ -s "$1" ] && sh "$1" --version >/dev/null 2>&1; }
+ok_=0
+for i in 1 2 3; do
+  if run_ok "$RUN"; then ok_=1; break; fi
+  echo ">> [第 ${i} 次] 安装包缺失或校验不通过（可能上次下载残包），删除并重新下载…"
+  rm -f "$RUN"
+  curl -fL --retry 3 --connect-timeout 30 -o "$RUN" "$URL" || { echo "下载失败，稍后重试…"; sleep 2; continue; }
+done
+[ "$ok_" = 1 ] || {
+  echo ">> 多次下载仍校验失败；请检查网络 / /tmp 空间后手动执行："
+  echo "   rm -f $RUN"
+  echo "   curl -fL -o $RUN '$URL' && sh $RUN --version   # 应打印驱动版本号"
+  echo "   然后再跑 sudo bash $0"
+  exit 1; }
+chmod +x "$RUN"
+echo ">> 安装包校验通过: $RUN（$(ls -l "$RUN" | awk '{print $5}') 字节）"
 echo ">> 卸载旧 nvidia 模块（如有）并安装（静默、无 X、不出 GL）…"
 rmmod nvidia_drm nvidia_modeset nvidia_uvm nvidia 2>/dev/null || true
 yum -y install gcc make dkms 2>/dev/null || dnf -y install gcc make dkms 2>/dev/null || true
