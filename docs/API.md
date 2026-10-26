@@ -27,6 +27,7 @@
 | /native/validate, /native/apply | POST | `{yaml}` 服务端预检、创建 |
 | /native/:id/rollback | POST | 仅删除本记录创建的 UID 匹配资源；不自动删除 PVC |
 | /keys, /keys/:id/revoke | GET / POST | Key 创建、列表、撤销 |
+| /keys/:id/restore, /keys/:id | POST / DELETE | 恢复未过期且已撤销的 Key；删除已撤销 Key |
 | /usage, /usage/export, /audit, /operations | GET | 用量、CSV、审计与任务 |
 | /usage/:id/reconcile | POST | 管理员提供 `{input,output,cost_micros,evidence}` 核对缺失计量 |
 | /cluster, /cluster/nodes/:name/cordon | GET / POST | 节点与禁止/恢复新调度 |

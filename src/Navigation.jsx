@@ -3,8 +3,8 @@ import {Activity,Database,Boxes,Terminal,Settings,Monitor} from 'lucide-react';
 const groups=[
  {home:'overview',label:'运行总览',icon:Activity,pages:['overview']},
  {home:'models',label:'模型资产',icon:Database,pages:['models','templates']},
- {home:'deployments',label:'服务部署',icon:Boxes,pages:['deployments','backends','routes'],advanced:['distributed','flows','releases','autoscaling','native']},
- {home:'playground',label:'在线调试',icon:Terminal,pages:['playground','keys']},
+ {home:'deployments',label:'服务部署',icon:Boxes,pages:['deployments','backends','routes','keys'],advanced:['distributed','flows','releases','autoscaling','native']},
+ {home:'playground',label:'在线调试',icon:Terminal,pages:['playground']},
  {home:'monitoring',label:'监控告警',icon:Monitor,pages:['monitoring','metrics','usage','operations']},
  {home:'settings',label:'平台设置',icon:Settings,pages:['settings','setup'],advanced:['capacity','policy','cluster','audit']}
 ];
