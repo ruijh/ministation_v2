@@ -54,6 +54,7 @@ test('本机扫描：根目录管理 + 扫描 + 描述批注 + 导入',async t=>
  assert.equal(again.name,'fake-model-1');
  assert.equal((await api('/api/materials/import',{path:model},201)).name,'fake-model-2');
  const list=await api('/api/models');assert.ok(list.some(m=>m.id===imp.id));
+ const del=await api('/api/models/'+imp.id,undefined,200,{},'DELETE');assert.equal(del.ok,true);assert.ok(!(await api('/api/models')).some(m=>m.id===imp.id));
  // 本机部署模型列表也应包含该目录下的模型（DB 根目录参与扫描）
  const local=await api('/api/local/models');assert.ok(local.models.some(m=>m.path===model));
  // 删除根目录

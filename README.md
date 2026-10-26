@@ -53,7 +53,7 @@ bash scripts/stop.sh           # 配套停止
 1. 在“接入服务”选择“接入模型服务”。已预填 Base URL `https://api.minimaxi.com/v1`、模型 `MiniMax-M3`。
 2. 在本地输入上游 API Key、确认实际费率后保存。Key 不需要发到聊天里。
 3. 执行连接测试，成功后发布逻辑模型，例如 `minimax-m3`。测试会调用上游。
-4. 在“访问密钥”创建仅授权此模型的平台 Key，立即保存一次性显示的密钥。
+4. 在“访问密钥”创建仅授权此模型的平台 Key，之后可在列表中复制新创建的密钥。
 5. 在“在线调试”输入平台 Key 并调用；在“用量账本”检查结果。
 
 统一入口为 `/v1/chat/completions`、`/v1/embeddings`、`/v1/models`。使用 `Authorization: Bearer <平台 Key>`。不要将上游 Key 当作平台 Key。

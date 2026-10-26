@@ -6,7 +6,7 @@ const num=n=>n==null?'—':Number(n).toLocaleString('zh-CN');
 
 async function req(path,body,method){
  const q=path.startsWith('/api')?path:'/api'+path;
- const r=await fetch(q,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json','X-Ministation-Client':'console'},body:body===undefined?undefined:JSON.stringify(body)});
+ const r=await fetch(q,{method:method||(body?'POST':'GET'),headers:{'Content-Type':'application/json','X-Ministation-Client':'console'},body:body==null?undefined:JSON.stringify(body)});
  const d=await r.json().catch(()=>({}));
  if(!r.ok)throw Object.assign(new Error(d.error?.message||'请求失败'),{code:d.error?.code});
  return d;
@@ -103,5 +103,5 @@ export default function ModelAssets({data,refresh,writable}){
  <ModelScopeSection writable={writable} onImported={refresh}/>
  <section className="panel"><div className="panel-title"><h2>已导入模型版本</h2></div>
   <p className="hint">从「本机模型扫描」导入，或手动记录的模型版本；每个版本在本机部署时作为通配匹配用。</p>
-  {imported.length?<div className="table-scroll"><table><thead><tr><th>名称</th><th>来源路径</th><th>任务</th><th>来源</th><th>创建时间</th>{writable&&<th>操作</th>}</tr></thead><tbody>{imported.map(r=><tr key={r.id}><td>{r.name}</td><td><small>{r.model_name}</small></td><td>{r.task||'chat'}</td><td>{r.source==='local'?'本地快照':'外部引用'}</td><td>{new Date(r.created_at).toLocaleString('zh-CN')}</td>{writable&&<td><div className="row-actions"><button className="danger" onClick={async()=>{if(!confirm('删除模型版本「'+r.name+'」？若已被某部署引用，后端会拒绝并提示先解除关联。'))return;try{await req('/api/models/'+r.id,null,'DELETE');refresh&&refresh();}catch(e){alert(e.message);}}}><Trash2 size={13}/>删除</button></div></td>}</tr>)}</tbody></table></div>:<div className="empty"><FolderOpen size={32}/><h3>尚未导入模型</h3><p>在「本机模型扫描」里点“导入资产”，或手动导入模型版本。</p></div>}</section></>;
+  {imported.length?<div className="table-scroll"><table><thead><tr><th>名称</th><th>来源路径</th><th>任务</th><th>来源</th><th>创建时间</th>{writable&&<th>操作</th>}</tr></thead><tbody>{imported.map(r=><tr key={r.id}><td>{r.name}</td><td><small>{r.model_name}</small></td><td>{r.task||'chat'}</td><td>{r.source==='local'?'本地快照':'外部引用'}</td><td>{new Date(r.created_at).toLocaleString('zh-CN')}</td>{writable&&<td><div className="row-actions"><button className="danger" onClick={async()=>{if(!confirm('删除模型版本「'+r.name+'」？若已被某部署引用，后端会拒绝并提示先解除关联。'))return;try{await req('/api/models/'+r.id,undefined,'DELETE');refresh&&refresh();}catch(e){alert(e.message);}}}><Trash2 size={13}/>删除</button></div></td>}</tr>)}</tbody></table></div>:<div className="empty"><FolderOpen size={32}/><h3>尚未导入模型</h3><p>在「本机模型扫描」里点“导入资产”，或手动导入模型版本。</p></div>}</section></>;
 }

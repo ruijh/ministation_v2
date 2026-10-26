@@ -21,6 +21,7 @@
 | /deployments/:id/diagnostics, /logs | GET | Pod、事件、最多 100 行日志；日志记录审计 |
 | /backends, /flows, /routes | GET / POST | 服务接入、编排、发布 |
 | /backends/:id/credential, /probe | POST | 更新凭据、真实探测 |
+| /backends/:id | DELETE | 管理员删除接入服务；已下线的服务目录引用一并删除，启用中的目录仍需先下线 |
 | /routes/:id/toggle | POST | `{enabled,version}` 上下线 |
 | /flows/validate | POST | `{graph}` 校验已授权且验证通过的下游 |
 | /native/validate, /native/apply | POST | `{yaml}` 服务端预检、创建 |
@@ -35,7 +36,7 @@
 ## 调用 API
 
 - `GET /v1/models`：返回此 Key 授权且已发布的逻辑模型。
-- `POST /v1/chat/completions`：文本 messages，max_tokens 1–8192，单服务支持 SSE。上游流式协议必须返回 `[DONE]`；中断不透明续传。
+- `POST /v1/chat/completions`：文本 messages，max_tokens 1–65536，单服务支持 SSE。上游流式协议必须返回 `[DONE]`；中断不透明续传。
 - `POST /v1/decisions`：JEV-CPU 结构化决策，详见 [决策服务](DECISIONS.md)。
 - `POST /v1/embeddings`：文本或文本数组，缺省 completion_tokens 视为 0。
 - 流式请求自动要求上游提供 usage。若缺失或格式不合法，记为 pending，保留预算预占，不伪造零用量。
@@ -69,6 +70,8 @@ TPM 与预算使用保守估算预占，完成后以上游 usage 结算；不是
 `GET /api/backends/:id` 返回项目内服务详情，隐藏凭据，仅提供 has_credential 标记。
 
 `POST /api/backends/:id/update` 仅管理员可用，提交完整可编辑配置及 version；过期版本返回 409。api_key 留空保留，非空加密替换。地址、模型、协议、超时或凭据变化使服务进入 Unverified，重新测试成功前网关拒绝新调用；名称、默认逻辑模型名和费率修改保留连接状态。已发布路由名称不随默认逻辑模型名修改。关联部署不在此接口调整。所有变更写入审计，历史请求费用不重算。
+
+`DELETE /api/backends/:id` 仅管理员可用。启用中或排空中的服务目录直接引用该服务，或在候选、备用、历史目标和编排节点中引用时，返回 409 `BACKEND_IN_USE`。已下线的引用会随接入服务一并删除并同步目录。删除只移除接入记录和加密凭据，不删除集群部署、分布式模型组或本机引擎进程。
 
 ## 本机部署接口（/api/local）
 

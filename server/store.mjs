@@ -15,7 +15,7 @@ export class Store{
  CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,user_id TEXT REFERENCES users(id) ON DELETE CASCADE,expires INTEGER);
  CREATE TABLE IF NOT EXISTS objects(id TEXT PRIMARY KEY,kind TEXT,project_id TEXT,name TEXT,data TEXT,version INTEGER DEFAULT 1,created_at TEXT,updated_at TEXT,UNIQUE(kind,project_id,name));
  CREATE INDEX IF NOT EXISTS objects_scope ON objects(kind,project_id);
- CREATE TABLE IF NOT EXISTS api_keys(id TEXT PRIMARY KEY,project_id TEXT,name TEXT,hash TEXT UNIQUE,prefix TEXT,models TEXT,expires TEXT,rpm INTEGER,tpm INTEGER,budget INTEGER,used INTEGER DEFAULT 0,reserved INTEGER DEFAULT 0,revoked INTEGER DEFAULT 0,created_at TEXT);
+ CREATE TABLE IF NOT EXISTS api_keys(id TEXT PRIMARY KEY,project_id TEXT,name TEXT,hash TEXT UNIQUE,prefix TEXT,models TEXT,expires TEXT,rpm INTEGER,tpm INTEGER,budget INTEGER,used INTEGER DEFAULT 0,reserved INTEGER DEFAULT 0,revoked INTEGER DEFAULT 0,created_at TEXT,secret TEXT);
  CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,project_id TEXT,key_id TEXT,model TEXT,target_id TEXT,parent_id TEXT,status TEXT,input_tokens INTEGER,output_tokens INTEGER,cached_tokens INTEGER,cost_micros INTEGER,rate_version TEXT,source TEXT,latency_ms REAL,ttft_ms REAL,error_code TEXT,created_at TEXT);
  CREATE INDEX IF NOT EXISTS usage_scope ON usage(project_id,created_at);
  CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,key_id TEXT,project_id TEXT,amount INTEGER,status TEXT,created INTEGER);
